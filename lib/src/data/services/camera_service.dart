@@ -113,7 +113,10 @@ class CameraService {
 
     final controller = CameraController(
       camera,
-      ResolutionPreset.high, // 720p: Instant hardware startup (<150ms) on POS devices (Sunmi V3)
+      // 1080p: repeated real-world testing showed small/dense barcodes
+      // (product tags, IMEI labels) failing to decode at 720p — the extra
+      // pixels matter more than the small camera-init time difference.
+      ResolutionPreset.veryHigh,
       enableAudio: false,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21
@@ -145,6 +148,7 @@ class CameraService {
         return null;
       }
 
+      await _ensureContinuousAutofocus(controller);
       await _applyDefaultZoom(controller, onZoomInitialized);
       debugPrint('[SmartScanner][perf] default zoom applied: ${sw?.elapsedMilliseconds}ms');
 
@@ -219,6 +223,7 @@ class CameraService {
 
       if (isDisposedCheck() || _controller != controller) return null;
 
+      await _ensureContinuousAutofocus(controller);
       await _applyDefaultZoom(controller, onZoomInitialized);
 
       await controller.startImageStream(onImageStream);
@@ -241,6 +246,18 @@ class CameraService {
       onZoomInitialized?.call(zoom);
     } catch (e) {
       debugPrint('Error applying default zoom: $e');
+    }
+  }
+
+  /// Explicitly requests continuous autofocus rather than trusting whatever
+  /// the platform defaults to, so the lens keeps hunting for sharpness on its
+  /// own as subject distance changes (e.g. the phone moving closer) instead
+  /// of only reacting to our own explicit focus-point nudges.
+  Future<void> _ensureContinuousAutofocus(CameraController controller) async {
+    try {
+      await controller.setFocusMode(FocusMode.auto);
+    } catch (e) {
+      debugPrint('Error setting continuous autofocus: $e');
     }
   }
 
@@ -338,15 +355,21 @@ class CameraService {
   }
 
   Future<void> focusOnPoint(Offset? normalizedOffset) async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
 
     try {
       if (normalizedOffset != null) {
-        await _controller!.setFocusPoint(normalizedOffset);
-        await _controller!.setExposurePoint(normalizedOffset);
+        // Clear first so a repeat request at the same point (e.g. the
+        // periodic re-focus nudge) can't be treated as a no-op and skipped —
+        // this forces a genuinely fresh autofocus scan every time, which
+        // matters most right after the phone moves closer to the subject.
+        await controller.setFocusPoint(null);
+        await controller.setFocusPoint(normalizedOffset);
+        await controller.setExposurePoint(normalizedOffset);
       } else {
-        await _controller!.setFocusPoint(null);
-        await _controller!.setExposurePoint(null);
+        await controller.setFocusPoint(null);
+        await controller.setExposurePoint(null);
       }
     } catch (e) {
       debugPrint('Error during refocus: $e');

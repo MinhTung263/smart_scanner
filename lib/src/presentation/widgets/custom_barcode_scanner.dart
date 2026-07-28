@@ -54,6 +54,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   late final BarcodeScannerService _barcodeScannerService;
   late final AnimationController _pulseController;
   Timer? _clearBarcodesTimer;
+  Timer? _periodicRefocusTimer;
 
   bool _isDisposed = false;
   bool _isBusy = false;
@@ -72,6 +73,73 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   static const int _idleThrottleMs = 100; // ~10 FPS cap
   static const int _idleGraceMs = 1500; // how long without activity before backing off
   late int _lastActivityAtMs;
+
+  // Guards CameraPreview against CameraController's async teardown.
+  // AnimatedSwitcher keeps the outgoing "camera_preview" branch mounted (and
+  // subscribed to the controller) for its whole crossfade duration; if
+  // stopImageStream()/dispose() notify listeners during that window,
+  // CameraPreview's own ValueListenableBuilder rebuilds and calls
+  // buildPreview() on an already-disposed controller, throwing
+  // "Disposed CameraController". Flipping this to false synchronously, before
+  // the async teardown starts, swaps CameraPreview out immediately so that
+  // race can't happen.
+  final ValueNotifier<bool> _cameraAlive = ValueNotifier(false);
+
+  // Visual feedback for tap-to-focus: a small bracket that briefly appears
+  // where focus was requested, then shrinks and fades out on its own. The id
+  // (rather than the position) is used as the indicator's key so tapping the
+  // exact same spot twice in a row still restarts the animation.
+  Offset? _focusIndicatorPosition;
+  int _focusIndicatorId = 0;
+
+  void _showFocusIndicatorAt(Offset position) {
+    if (!mounted) return;
+    setState(() {
+      _focusIndicatorPosition = position;
+      _focusIndicatorId++;
+    });
+  }
+
+  // "Back away a bit" hint: shown once the frame has been blurry OR glare-
+  // affected — a glare edge is still a sharp edge, so this is a separate
+  // signal from blur, but the same remedy (back away / change angle) helps
+  // both — *and* the phone has been held steady *and* nothing has decoded,
+  // for a sustained stretch. Never on a single bad frame, so it doesn't nag
+  // during normal panning/searching or a brief blip.
+  static const int _scanTroubleHintDelayMs = 2500;
+  int? _scanTroubleSinceMs;
+  bool _scanTroubleIsGlare = false;
+  bool _showBackAwayHint = false;
+
+  void _updateBackAwayHint({
+    required int now,
+    required bool isBlurry,
+    required bool hasGlare,
+    required bool isMoving,
+    required bool hasBarcode,
+  }) {
+    final bool sustained = (isBlurry || hasGlare) && !isMoving && !hasBarcode;
+    if (!sustained) {
+      _scanTroubleSinceMs = null;
+      if (_showBackAwayHint && mounted) setState(() => _showBackAwayHint = false);
+      return;
+    }
+
+    _scanTroubleSinceMs ??= now;
+    final bool shouldShow = (now - _scanTroubleSinceMs!) > _scanTroubleHintDelayMs;
+    if ((shouldShow != _showBackAwayHint || hasGlare != _scanTroubleIsGlare) && mounted) {
+      setState(() {
+        _showBackAwayHint = shouldShow;
+        _scanTroubleIsGlare = hasGlare;
+      });
+    }
+  }
+
+  void _handleCameraUpdateUI() {
+    if (!mounted) return;
+    _cameraAlive.value = _cameraService.isInitialized;
+    setState(() {});
+  }
 
   @override
   void initState() {
@@ -104,9 +172,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     final errorMsg = await _cameraService.initializeCamera(
       onImageStream: _processCameraImage,
       isDisposedCheck: () => _isDisposed,
-      onUpdateUI: () {
-        if (mounted) setState(() {});
-      },
+      onUpdateUI: _handleCameraUpdateUI,
       onZoomInitialized: _handleZoomInitialized,
     );
 
@@ -118,7 +184,31 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       // Prioritize sharpness on the scan window from the very first frame,
       // instead of whatever whole-frame point the camera defaults to.
       _refocusOnScanWindow();
+      _startPeriodicRefocus();
     }
+  }
+
+  /// Nudges autofocus every ~900ms while still searching for a code, instead
+  /// of relying solely on the motion-just-settled trigger. That trigger can
+  /// fail to fire at close range: the same small hand tremor produces a much
+  /// bigger apparent frame-to-frame change when the subject fills more of the
+  /// frame, so the motion detector may never register "settled" — leaving the
+  /// lens stuck at whatever distance it last focused on and the image blurry
+  /// once the phone is moved in close.
+  void _startPeriodicRefocus() {
+    _periodicRefocusTimer?.cancel();
+    _periodicRefocusTimer = Timer.periodic(const Duration(milliseconds: 900), (_) {
+      if (!mounted || _isDisposed) return;
+      // Leave a working focus alone once a code is actually in frame.
+      if (_recognizedBarcodes.isEmpty) {
+        _refocusOnScanWindow();
+      }
+    });
+  }
+
+  void _stopPeriodicRefocus() {
+    _periodicRefocusTimer?.cancel();
+    _periodicRefocusTimer = null;
   }
 
   void _handleZoomInitialized(double zoom) {
@@ -131,6 +221,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     if (_isDisposed) return;
     _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
+    _stopPeriodicRefocus();
+    _cameraAlive.value = false;
 
     await _cameraService.stopLiveFeed(
       isDisposing: true,
@@ -143,6 +235,9 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   void dispose() {
     _pulseController.dispose();
     _clearBarcodesTimer?.cancel();
+    _stopPeriodicRefocus();
+    _cameraAlive.value = false;
+    _cameraAlive.dispose();
     if (!_isDisposed) {
       _isDisposed = true;
       WidgetsBinding.instance.removeObserver(this);
@@ -168,10 +263,9 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
+      _stopPeriodicRefocus();
       _cameraService.stopLiveFeed(
-        onUpdateUI: () {
-          if (mounted) setState(() {});
-        },
+        onUpdateUI: _handleCameraUpdateUI,
       );
     } else if (state == AppLifecycleState.resumed) {
       if (_cameraError != null || _cameraService.currentCamera == null) {
@@ -181,11 +275,14 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
         _cameraService.initializeCamera(
           onImageStream: _processCameraImage,
           isDisposedCheck: () => _isDisposed,
-          onUpdateUI: () {
-            if (mounted) setState(() {});
-          },
+          onUpdateUI: _handleCameraUpdateUI,
           onZoomInitialized: _handleZoomInitialized,
-        );
+        ).then((errorMsg) {
+          if (errorMsg == null && mounted && !_isDisposed) {
+            _refocusOnScanWindow();
+            _startPeriodicRefocus();
+          }
+        });
       }
     }
   }
@@ -210,7 +307,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     // scanWindow/screenSize here falls back to full-frame decoding) while we
     // isolate a reported bounding-box distortion — see processCameraImage's
     // crop path in barcode_scanner_service.dart.
-    final (barcodes, justSettled, isMoving) = await _barcodeScannerService.processCameraImage(
+    final (barcodes, justSettled, isMoving, isBlurry, hasGlare) =
+        await _barcodeScannerService.processCameraImage(
       image,
       _cameraService.currentCamera!,
     );
@@ -224,6 +322,14 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       // a code; refresh focus on the scan window while it's held steady.
       _refocusOnScanWindow();
     }
+
+    _updateBackAwayHint(
+      now: now,
+      isBlurry: isBlurry,
+      hasGlare: hasGlare,
+      isMoving: isMoving,
+      hasBarcode: barcodes.isNotEmpty,
+    );
 
     if (mounted && !_isDisposed) {
       // Ignore anything found while the entrance UI is still settling in,
@@ -395,15 +501,39 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                         widget.onZoomChanged!(_currentZoom);
                     }
                   },
-                  onTapDown: (details) =>
-                      _cameraService.focusOnScreenPosition(context, details),
+                  onTapDown: (details) {
+                    final scanWindow = widget.scanWindow;
+                    final Offset focusIndicatorPoint;
+                    if (scanWindow != null && scanWindow.contains(details.localPosition)) {
+                      // Focus the scan window's center rather than the exact
+                      // tap point: the barcode itself is high-contrast and
+                      // easy for autofocus to lock onto, but a slightly
+                      // off-target tap can land on low-contrast background
+                      // next to it, where autofocus struggles to converge at
+                      // all — confirmed by zoom's center-based refocus
+                      // achieving focus at distances where exact-tap focus
+                      // didn't.
+                      _refocusOnScanWindow();
+                      focusIndicatorPoint = scanWindow.center;
+                    } else {
+                      _cameraService.focusOnScreenPosition(context, details);
+                      focusIndicatorPoint = details.localPosition;
+                    }
+                    _showFocusIndicatorAt(focusIndicatorPoint);
+                  },
                   child: SizedBox.expand(
                     child: FittedBox(
                       fit: BoxFit.cover,
                       child: SizedBox(
                         width: imageSize.width,
                         height: imageSize.height,
-                        child: CameraPreview(controller),
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: _cameraAlive,
+                          builder: (context, alive, _) {
+                            if (!alive) return const SizedBox.shrink();
+                            return CameraPreview(controller);
+                          },
+                        ),
                       ),
                     ),
                   ),
@@ -454,7 +584,117 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
 
         if (widget.overlayBuilder != null)
           widget.overlayBuilder!(context, _recognizedBarcodes, imageSize),
+
+        if (_showBackAwayHint && isCameraReady)
+          Positioned(
+            left: 24,
+            right: 24,
+            top: widget.scanWindow != null
+                ? widget.scanWindow!.bottom + 16
+                : size.height / 2 + 90,
+            child: IgnorePointer(
+              child: Center(
+                child: AnimatedOpacity(
+                  opacity: _showBackAwayHint ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 250),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(180),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _scanTroubleIsGlare
+                          ? 'Mã đang bị lóa sáng, hãy lùi ra hoặc đổi góc quét một chút'
+                          : 'Ảnh đang mờ, hãy lùi camera ra xa mã vạch một chút',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        if (_focusIndicatorPosition != null)
+          Positioned(
+            left: _focusIndicatorPosition!.dx - 36,
+            top: _focusIndicatorPosition!.dy - 36,
+            child: IgnorePointer(
+              child: _FocusIndicator(
+                key: ValueKey(_focusIndicatorId),
+                onCompleted: () {
+                  if (mounted) setState(() => _focusIndicatorPosition = null);
+                },
+              ),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+/// One-shot bracket that appears where a focus request was made, shrinks
+/// slightly and fades out, then reports back so the parent can remove it.
+class _FocusIndicator extends StatefulWidget {
+  final VoidCallback onCompleted;
+  const _FocusIndicator({super.key, required this.onCompleted});
+
+  @override
+  State<_FocusIndicator> createState() => _FocusIndicatorState();
+}
+
+class _FocusIndicatorState extends State<_FocusIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..forward();
+    _controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        widget.onCompleted();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final double t = _controller.value.clamp(0.0, 1.0);
+        final double scale = 1.35 - 0.35 * Curves.easeOut.transform(t);
+        final double opacity = t < 0.55 ? 1.0 : (1.0 - (t - 0.55) / 0.45).clamp(0.0, 1.0);
+        return Opacity(
+          opacity: opacity,
+          child: Transform.scale(
+            scale: scale,
+            child: Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.white, width: 2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

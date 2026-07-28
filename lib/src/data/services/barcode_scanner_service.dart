@@ -33,13 +33,41 @@ class BarcodeScannerService {
   /// so ML Kit has more signal to work with on small or washed-out barcodes.
   /// Skipped when the frame already has decent contrast, to avoid the extra
   /// pass on every frame.
+  final List<int> _reusableHistogram = List<int>.filled(256, 0);
+
   void _applyAdaptiveContrastStretch(Uint8List nv21Bytes, int yPlaneLength) {
-    int lo = 255;
-    int hi = 0;
+    // Percentile-based bounds instead of raw min/max: a small glare hotspot
+    // (or a few pure-black shadow pixels) can pull the raw max/min to an
+    // extreme and make the frame look "already high contrast" globally, even
+    // though the barcode itself is still a washed-out, low-contrast patch.
+    // Clipping the extreme ~1% at each end ignores that handful of outlier
+    // pixels instead of letting them dictate the whole decision.
+    final histogram = _reusableHistogram;
+    histogram.fillRange(0, 256, 0);
     for (int i = 0; i < yPlaneLength; i++) {
-      final int v = nv21Bytes[i];
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
+      histogram[nv21Bytes[i]]++;
+    }
+
+    final int clipCount = (yPlaneLength * 0.01).round();
+
+    int lo = 0;
+    int cumulative = 0;
+    for (int v = 0; v < 256; v++) {
+      cumulative += histogram[v];
+      if (cumulative > clipCount) {
+        lo = v;
+        break;
+      }
+    }
+
+    int hi = 255;
+    cumulative = 0;
+    for (int v = 255; v >= 0; v--) {
+      cumulative += histogram[v];
+      if (cumulative > clipCount) {
+        hi = v;
+        break;
+      }
     }
 
     final int range = hi - lo;
@@ -59,6 +87,8 @@ class BarcodeScannerService {
   bool _armedForRefocus = false;
   bool _justSettled = false;
   bool _isMoving = true; // safe default (assume active) until first check runs
+  bool _isBlurry = false; // safe default (assume sharp) until first check runs
+  bool _hasGlare = false; // safe default (assume no glare) until first check runs
 
   static const int _motionSampleStep = 61; // sparse sampling keeps this cheap
   static const int _motionStillThreshold = 6; // avg per-sample luma delta
@@ -111,6 +141,60 @@ class BarcodeScannerService {
       return (isMoving: false, justSettled: true);
     }
     return (isMoving: false, justSettled: false);
+  }
+
+  // --- Sharpness estimation (for the "you're too close, back away a bit"
+  // hint — the phone's lens has a minimum focus distance no amount of
+  // autofocus retriggering can overcome once crossed). ---
+  static const int _sharpnessSampleStride = 47; // sparse sampling keeps this cheap
+  static const int _sharpnessGap = 3; // pixel gap used to measure a local gradient
+  static const double _blurySharpnessThreshold = 5.0; // avg local gradient below this ~= blurry
+
+  /// Average local horizontal gradient over a sparse grid of the Y-plane, as
+  /// a cheap proxy for "how much crisp edge detail is in this frame". Sharp,
+  /// in-focus frames have strong edges (high value); blurry ones are soft
+  /// (low value). Stays within each row so the gradient reflects real
+  /// neighboring pixels instead of an accidental wrap to the next scanline.
+  bool _estimateIsBlurry(Uint8List nv21Bytes, int width, int height) {
+    final int yPlaneLength = width * height;
+    int totalGradient = 0;
+    int samples = 0;
+
+    for (int i = 0; i + _sharpnessGap < yPlaneLength; i += _sharpnessSampleStride) {
+      final int col = i % width;
+      if (col + _sharpnessGap >= width) continue;
+      totalGradient += (nv21Bytes[i] - nv21Bytes[i + _sharpnessGap]).abs();
+      samples++;
+    }
+
+    if (samples == 0) return false; // not enough data — don't false-flag blur
+    final double avgGradient = totalGradient / samples;
+    return avgGradient < _blurySharpnessThreshold;
+  }
+
+  // --- Glare estimation (backing away or changing angle reduces a specular
+  // reflection's share of the frame and often clears it entirely — same
+  // "back away" remedy as the blur hint, different cause). ---
+  static const int _glareSampleStep = 5; // denser than motion/sharpness sampling: glare can be a small hotspot
+  static const int _glareBrightThreshold = 248; // near-saturated luma
+  static const double _glareAreaRatio = 0.035; // >3.5% of sampled pixels blown out ~= meaningful glare
+
+  /// Fraction of a sparse sample of the Y-plane that's blown-out bright, as a
+  /// cheap proxy for "is there a specular reflection hot enough to wash out
+  /// part of the frame". A glare edge is still a sharp edge, so this needs to
+  /// be checked independently of the blur/sharpness estimate above — a glared
+  /// frame can look perfectly "sharp" by that metric while still failing to
+  /// decode.
+  bool _estimateHasGlare(Uint8List nv21Bytes, int yPlaneLength) {
+    final int sampleCount = yPlaneLength ~/ _glareSampleStep;
+    if (sampleCount == 0) return false;
+
+    int brightCount = 0;
+    for (int i = 0; i < yPlaneLength; i += _glareSampleStep) {
+      if (nv21Bytes[i] >= _glareBrightThreshold) brightCount++;
+    }
+
+    return (brightCount / sampleCount) > _glareAreaRatio;
   }
 
   // --- Crop-to-scan-window (Android/NV21 only) ---
@@ -339,11 +423,14 @@ class BarcodeScannerService {
         }
       }
 
-      // Check motion on the raw luma before contrast-stretching it, since the
-      // stretch factor varies frame to frame and would add noise to the delta.
+      // Check motion, sharpness and glare on the raw luma before
+      // contrast-stretching it, since the stretch factor varies frame to
+      // frame and would add noise to all three.
       final motion = _checkMotion(nv21Bytes, width * height);
       _isMoving = motion.isMoving;
       _justSettled = motion.justSettled;
+      _isBlurry = _estimateIsBlurry(nv21Bytes, width, height);
+      _hasGlare = _estimateHasGlare(nv21Bytes, width * height);
 
       _applyAdaptiveContrastStretch(nv21Bytes, width * height);
 
@@ -457,22 +544,33 @@ class BarcodeScannerService {
   /// - [isMoving] reflects the current frame, for callers that want to slow
   ///   down frame processing while the camera is idle and speed back up the
   ///   moment it's picked up again.
+  /// - [isBlurry] reflects the current frame's sharpness, so callers can hint
+  ///   the user to back away once they're closer than the lens's minimum
+  ///   focus distance (a hardware limit no amount of autofocus retriggering
+  ///   can overcome).
+  /// - [hasGlare] reflects a bright specular reflection washing out part of
+  ///   the frame — a different failure mode than blur (a glare edge is still
+  ///   a sharp edge), but the same remedy applies: backing away or changing
+  ///   the scan angle reduces or clears it.
   ///
   /// [scanWindow] and [screenSize], when provided, let this crop the frame
   /// down to roughly the visible scan window before decoding (Android only;
   /// see _computeCropRegion). Returned barcodes are always translated back to
   /// full-frame-relative coordinates, so callers don't need to know whether
   /// cropping happened.
-  Future<(List<Barcode> barcodes, bool justSettled, bool isMoving)> processCameraImage(
+  Future<(List<Barcode> barcodes, bool justSettled, bool isMoving, bool isBlurry, bool hasGlare)>
+      processCameraImage(
     CameraImage image,
     CameraDescription camera, {
     Rect? scanWindow,
     Size? screenSize,
   }) async {
-    if (_barcodeScanner == null) return (<Barcode>[], false, true);
+    if (_barcodeScanner == null) return (<Barcode>[], false, true, false, false);
 
     _justSettled = false;
     _isMoving = true;
+    _isBlurry = false;
+    _hasGlare = false;
     final inputImage = _inputImageFromCameraImage(
       image,
       camera,
@@ -481,18 +579,20 @@ class BarcodeScannerService {
     );
     final justSettled = _justSettled;
     final isMoving = _isMoving;
+    final isBlurry = _isBlurry;
+    final hasGlare = _hasGlare;
     final cropOffset = _lastCropOffset;
-    if (inputImage == null) return (<Barcode>[], justSettled, isMoving);
+    if (inputImage == null) return (<Barcode>[], justSettled, isMoving, isBlurry, hasGlare);
 
     try {
       final results = await _barcodeScanner!.processImage(inputImage);
       final translated = cropOffset == null
           ? results
           : results.map((b) => _translateBarcode(b, cropOffset)).toList();
-      return (translated, justSettled, isMoving);
+      return (translated, justSettled, isMoving, isBlurry, hasGlare);
     } catch (e) {
       debugPrint('Error scanning barcodes: $e');
-      return (<Barcode>[], justSettled, isMoving);
+      return (<Barcode>[], justSettled, isMoving, isBlurry, hasGlare);
     }
   }
 
@@ -559,6 +659,28 @@ class BarcodeScannerService {
 
         return !effectiveScanWindow.contains(mappedRect.center);
       });
+
+      // The 20% padding is meant to forgive imprecision for a single code —
+      // but with several codes packed close together (e.g. adjacent barcodes
+      // on the same label), that same padding makes it easy to accidentally
+      // pick up a neighbor instead of the one actually centered. When more
+      // than one candidate survives, re-check against the raw (unpadded)
+      // window to disambiguate; only fall back to the padded set if that
+      // strict check would eliminate every candidate.
+      if (barcodes.length > 1) {
+        final strictMatches = barcodes.where((barcode) {
+          final mappedRect = mapMlKitRectToScreen(
+            rawRect: barcode.boundingBox,
+            previewSize: previewSize,
+            screenSize: screenSize,
+          );
+          return scanWindow.contains(mappedRect.center);
+        }).toList();
+
+        if (strictMatches.isNotEmpty) {
+          barcodes = strictMatches;
+        }
+      }
     }
 
     if (barcodes.isEmpty) return [];
