@@ -57,7 +57,7 @@ class ScannerController extends ChangeNotifier {
   }
 
   void updateScanWindowSizeRatio(double scale) {
-    final newRatio = (_baseScanWindowSizeRatio * (1.0 / scale)).clamp(0.2, 0.9);
+    final newRatio = (_baseScanWindowSizeRatio * (1.0 / scale)).clamp(0.4, 0.9);
     if (_scanWindowSizeRatio != newRatio) {
       _scanWindowSizeRatio = newRatio;
       notifyListeners();
@@ -73,7 +73,7 @@ class ScannerController extends ChangeNotifier {
     if (barcodes.isEmpty) return false;
 
     final newBarcodeValues = barcodes
-        .map((b) => b.displayValue)
+        .map((b) => b.displayValue ?? b.rawValue)
         .where((val) => val != null)
         .cast<String>()
         .toList();

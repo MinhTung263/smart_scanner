@@ -36,163 +36,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, int>? _scannedResults;
   String? _singleResult;
 
-  void _openScanner(BuildContext context, {required bool isQRMode}) async {
-    final result = await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => SmartScannerScreen(
-          isQRMode: isQRMode,
-          bottomWidgetBuilder: (context, barcode) {
-            return Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF4F46E5).withValues(alpha: 0.3),
-                    blurRadius: 15,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const Text(
-                    'MÃ VỪA QUÉT',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    barcode,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Sản phẩm tồn tại trong Database',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                ],
-              ),
-            );
-          },
-          multiScanItemBuilder: (context, barcode) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  barcode,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Icon(Icons.check_circle, color: Colors.greenAccent.shade400, size: 14),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Hợp lệ',
-                      style: TextStyle(
-                        color: Colors.greenAccent.shade400,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            );
-          },
-          multiScanSummaryBuilder: (context, totalItems, totalQuantity) {
-            return Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                margin: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.qr_code, color: Colors.white, size: 16),
-                    const SizedBox(width: 6),
-                    Text(
-                      '$totalItems mã',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    const SizedBox(width: 12),
-                    Container(width: 1, height: 12, color: Colors.white54),
-                    const SizedBox(width: 12),
-                    const Icon(Icons.inventory_2_outlined, color: Colors.amberAccent, size: 16),
-                    const SizedBox(width: 6),
-                    Text(
-                      '$totalQuantity SP',
-                      style: const TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-          multiScanFinishButtonBuilder: (context, scannedBarcodes, onFinish) {
-            return SizedBox(
-              height: 36,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF4F46E5),
-                  foregroundColor: Colors.white,
-                  elevation: 8,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  shadowColor: const Color(0xFF4F46E5).withValues(alpha: 0.5),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-                onPressed: onFinish,
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text(
-                  'Xong',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-
+  void _handleScanResult(SmartScannerResult? result) {
     if (result != null) {
       setState(() {
-        if (result is Map) {
-          _scannedResults = Map<String, int>.from(result);
+        if (result.isMultiScan) {
+          _scannedResults = result.multiBarcodes;
           _singleResult = null;
         } else {
-          _singleResult = result.toString();
+          _singleResult = result.singleBarcode;
           _scannedResults = null;
         }
       });
@@ -256,7 +107,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 20.0,
+                vertical: 24.0,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -281,7 +135,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
-                          onTap: () => _openScanner(context, isQRMode: false),
+                          onTap: () async {
+                            final result = await SmartScanner.scanBarcode(
+                              context,
+                            );
+                            _handleScanResult(result);
+                          },
                         ),
                       ),
                       const SizedBox(width: 16),
@@ -295,7 +154,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
-                          onTap: () => _openScanner(context, isQRMode: true),
+                          onTap: () async {
+                            final result = await SmartScanner.scanQR(context);
+                            _handleScanResult(result);
+                          },
                         ),
                       ),
                     ],
@@ -371,6 +233,7 @@ class _HomeScreenState extends State<HomeScreen> {
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.8),
                 fontSize: 13,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -415,10 +278,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 8),
           const Text(
             'Hãy nhấn vào các thẻ bên trên để quét mã',
-            style: TextStyle(
-              color: Color(0xFF9CA3AF),
-              fontSize: 13,
-            ),
+            style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
           ),
         ],
       ),
@@ -507,7 +367,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: const Color(0xFFEFF6FF),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Icon(Icons.list_alt, color: Color(0xFF3B82F6), size: 20),
+                        child: const Icon(
+                          Icons.list_alt,
+                          color: Color(0xFF3B82F6),
+                          size: 20,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       const Text(
@@ -521,7 +385,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFEF3C7),
                       borderRadius: BorderRadius.circular(20),
@@ -552,7 +419,10 @@ class _HomeScreenState extends State<HomeScreen> {
               itemBuilder: (context, index) {
                 final entry = entries[index];
                 return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 4,
+                  ),
                   leading: Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -574,7 +444,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
                   ),
                   trailing: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFF4F46E5).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),

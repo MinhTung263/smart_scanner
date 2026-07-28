@@ -1,4 +1,4 @@
-package com.example.example
+package com.smartscanner.vn
 
 import io.flutter.embedding.android.FlutterActivity
 

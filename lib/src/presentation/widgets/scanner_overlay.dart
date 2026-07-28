@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 
 class ScannerOverlay extends StatelessWidget {
@@ -97,8 +96,8 @@ class _ScannerOverlayPainter extends CustomPainter {
     required this.strokeWidth,
     required this.borderColor,
     required this.cornerLength,
-    required this.cornerOffset,
     required this.overlayColor,
+    this.cornerOffset = 0.0,
   });
 
   @override
@@ -153,10 +152,10 @@ class _ScannerOverlayPainter extends CustomPainter {
     // Góc dưới - phải
     canvas.drawPath(
       Path()
-        ..moveTo(right - cl, bottom)
-        ..lineTo(right - r, bottom)
-        ..arcToPoint(Offset(right, bottom - r), radius: Radius.circular(r), clockwise: false)
-        ..lineTo(right, bottom - cl),
+        ..moveTo(right, bottom - cl)
+        ..lineTo(right, bottom - r)
+        ..arcToPoint(Offset(right - r, bottom), radius: Radius.circular(r))
+        ..lineTo(right - cl, bottom),
       borderPaint,
     );
   }

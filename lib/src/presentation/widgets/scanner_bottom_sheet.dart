@@ -42,7 +42,7 @@ class ScannerBottomSheet extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       margin: const EdgeInsets.symmetric(vertical: 8),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.6),
+                        color: Colors.black.withValues(alpha: 0.6),
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Row(
@@ -100,10 +100,10 @@ class ScannerBottomSheet extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: const Color(0xFF1E1E1E), // Dark Mode Card
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 1),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.6),
+                                color: Colors.black.withValues(alpha: 0.6),
                                 blurRadius: 15,
                                 offset: const Offset(0, 8),
                               ),
@@ -115,7 +115,7 @@ class ScannerBottomSheet extends StatelessWidget {
                                 width: 48,
                                 height: 48,
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.05),
+                                  color: Colors.white.withValues(alpha: 0.05),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Icon(
@@ -149,7 +149,7 @@ class ScannerBottomSheet extends StatelessWidget {
                                           Text(
                                             'Sản phẩm chưa có tên',
                                             style: TextStyle(
-                                              color: Colors.white.withOpacity(0.5),
+                                              color: Colors.white.withValues(alpha: 0.5),
                                               fontSize: 13,
                                             ),
                                             maxLines: 1,
@@ -163,7 +163,7 @@ class ScannerBottomSheet extends StatelessWidget {
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                     decoration: BoxDecoration(
-                                      color: Colors.blueAccent.withOpacity(0.15),
+                                      color: Colors.blueAccent.withValues(alpha: 0.15),
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Text(

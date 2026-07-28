@@ -21,7 +21,11 @@ class ScannerTopBar extends StatelessWidget {
               padding: const EdgeInsets.all(10),
               borderRadius: 16,
               child: InkWell(
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () {
+                  if (ModalRoute.of(context)?.isCurrent == true) {
+                    Navigator.of(context).pop();
+                  }
+                },
                 child: const Icon(
                   Icons.arrow_back_ios_new_rounded,
                   color: Colors.white,
@@ -64,6 +68,7 @@ class ScannerControlsRow extends StatelessWidget {
   final ValueChanged<double> onZoomChangeEnd;
   final bool isMultiScan;
   final ValueChanged<bool> onMultiScanChanged;
+  final bool showMultiScanToggle;
 
   const ScannerControlsRow({
     super.key,
@@ -72,6 +77,7 @@ class ScannerControlsRow extends StatelessWidget {
     required this.onZoomChangeEnd,
     required this.isMultiScan,
     required this.onMultiScanChanged,
+    this.showMultiScanToggle = true,
   });
 
   @override
@@ -83,17 +89,18 @@ class ScannerControlsRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           // Multi-Scan Toggle
-          GlassContainer(
+          if (showMultiScanToggle)
+            GlassContainer(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             borderRadius: 30,
-            backgroundColor: Colors.black.withOpacity(0.4),
+            backgroundColor: Colors.black.withValues(alpha: 0.4),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
                   isMultiScan
-                      ? Icons.library_add_check
-                      : Icons.library_add_check_outlined,
+                      ? Icons.auto_awesome_motion
+                      : Icons.auto_awesome_motion_outlined,
                   color: isMultiScan ? Colors.greenAccent : Colors.white70,
                   size: 20,
                 ),
@@ -112,8 +119,8 @@ class ScannerControlsRow extends StatelessWidget {
                   width: 44,
                   child: CupertinoSwitch(
                     value: isMultiScan,
-                    activeColor: Colors.greenAccent.shade400,
-                    trackColor: Colors.white.withOpacity(0.3),
+                    activeTrackColor: Colors.greenAccent.shade400,
+                    inactiveTrackColor: Colors.white.withValues(alpha: 0.3),
                     onChanged: (value) {
                       onMultiScanChanged(value);
                       HapticFeedback.lightImpact();
@@ -122,9 +129,10 @@ class ScannerControlsRow extends StatelessWidget {
                 ),
               ],
             ),
-          ),
+            ),
           
-          const SizedBox(height: 12),
+          if (showMultiScanToggle)
+            const SizedBox(height: 12),
 
           // Zoom Control
           Row(
@@ -133,7 +141,7 @@ class ScannerControlsRow extends StatelessWidget {
                 child: GlassContainer(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                   borderRadius: 30,
-                  backgroundColor: Colors.black.withOpacity(0.4),
+                  backgroundColor: Colors.black.withValues(alpha: 0.4),
                   child: Row(
                     children: [
                       Expanded(
@@ -148,9 +156,9 @@ class ScannerControlsRow extends StatelessWidget {
                             ),
                           ),
                           child: Slider(
-                            value: currentZoom,
+                            value: currentZoom.clamp(1.0, 2.5),
                             min: 1.0,
-                            max: 4.0,
+                            max: 2.5,
                             activeColor: Colors.white,
                             inactiveColor: Colors.white24,
                             onChanged: onZoomChanged,

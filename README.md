@@ -1,38 +1,33 @@
 # Smart Scanner
 
-A powerful Flutter package for barcode and QR code scanning, powered by Google ML Kit.
+A high-performance Flutter package for Barcode and QR Code scanning, powered by Google ML Kit and optimized for mobile devices and Android POS terminals (Sunmi V3, Honeywell, Zebra, etc.).
 
 ## Features
 
-- High-performance barcode and QR code scanning.
-- Built-in UI components (camera preview, custom overlays, glassmorphic design).
-- Easy to integrate into any Flutter app.
-- Full control over camera and scanning behavior via `ScannerController`.
-- Designed for both single scan and continuous scanning use cases.
-
-## Installation
-
-Add `smart_scanner` to your `pubspec.yaml`:
-
-```yaml
-dependencies:
-  smart_scanner: ^0.0.1
-```
+- **High-Performance Scanning**: Powered by Google ML Kit with zero-allocation memory buffers (60 FPS UI performance).
+- **Adaptive Contrast Enhancement**: Auto-stretches low-contrast image frames to detect small or blurry 1D/2D barcodes.
+- **POS & Sunmi V3 Hardware Ready**: Supports physical haptic vibration feedback on Sunmi V3 and Android POS devices.
+- **Multi-Scan & Single Scan**: Built-in UI for single scan return or multi-item inventory scanning.
+- **Gallery Image Picker**: Option to scan barcodes directly from gallery images.
 
 ## Setup
 
-### iOS
-Requires iOS 12.0 or higher. Add the following key to your `ios/Runner/Info.plist`:
+### Android
+
+Add the Camera and Vibration permissions to your `android/app/src/main/AndroidManifest.xml`:
 
 ```xml
-<key>NSCameraUsageDescription</key>
-<string>We need access to your camera to scan barcodes and QR codes.</string>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required permissions for Camera and Vibration (Sunmi V3 / Android POS) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application ...>
 ```
 
-### Android
-Minimum SDK version is 21. Ensure your `android/app/build.gradle` has:
+Ensure your `android/app/build.gradle` has `minSdkVersion 21`:
 
-```gradle
+```groovy
 android {
     defaultConfig {
         minSdkVersion 21
@@ -40,6 +35,47 @@ android {
 }
 ```
 
-## Usage
+### iOS
 
-Check out the `smart_scanner_app` directory for a complete working example.
+Add the Camera usage description to your `ios/Runner/Info.plist`:
+
+```xml
+<key>NSCameraUsageDescription</key>
+<string>Ứng dụng cần quyền sử dụng Camera để quét mã vạch và mã QR.</string>
+```
+
+## Quick Usage
+
+### 1. Single Barcode Scan
+
+```dart
+final result = await SmartScanner.scanBarcode(context);
+if (result != null && !result.isMultiScan) {
+  print('Barcode: ${result.singleBarcode}');
+}
+```
+
+### 2. QR Code Scan
+
+```dart
+final result = await SmartScanner.scanQR(context);
+if (result != null && !result.isMultiScan) {
+  print('QR Code: ${result.singleBarcode}');
+}
+```
+
+### 3. Multi-Scan Mode (Inventory / Stock taking)
+
+```dart
+final result = await SmartScanner.scanBarcode(
+  context,
+  showMultiScanToggle: true,
+);
+
+if (result != null && result.isMultiScan) {
+  final Map<String, int> barcodes = result.multiBarcodes;
+  barcodes.forEach((barcode, count) {
+    print('$barcode: $count pcs');
+  });
+}
+```
