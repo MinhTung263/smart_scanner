@@ -111,7 +111,7 @@ class CameraService {
       // 1080p: repeated real-world testing showed small/dense barcodes
       // (product tags, IMEI labels) failing to decode at 720p — the extra
       // pixels matter more than the small camera-init time difference.
-      ResolutionPreset.veryHigh,
+      ResolutionPreset.high,
       enableAudio: false,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21
@@ -135,7 +135,7 @@ class CameraService {
       ]);
       minZoomLevel = zoomLevels[0];
       final nativeMax = zoomLevels[1];
-      maxZoomLevel = nativeMax > 2.5 ? 2.5 : nativeMax;
+      maxZoomLevel = nativeMax > 3.0 ? 3.0 : nativeMax;
 
       if (isDisposedCheck() || _controller != controller) {
         return null;
@@ -194,7 +194,7 @@ class CameraService {
 
     final controller = CameraController(
       camera,
-      ResolutionPreset.veryHigh, // 1080p: Perfect balance of sharpness for tiny barcodes and 60FPS speed
+      ResolutionPreset.high, // 720p: Optimal balance of sharpness and thermal efficiency
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420, // Must be yuv420 as this is the fallback
     );
@@ -208,7 +208,7 @@ class CameraService {
 
       minZoomLevel = await controller.getMinZoomLevel();
       final nativeMax = await controller.getMaxZoomLevel();
-      maxZoomLevel = nativeMax > 2.5 ? 2.5 : nativeMax;
+      maxZoomLevel = nativeMax > 3.0 ? 3.0 : nativeMax;
 
       if (isDisposedCheck() || _controller != controller) return null;
 
@@ -311,6 +311,16 @@ class CameraService {
 
     _controller!.setZoomLevel(zoomLevel);
     onZoomChanged(zoomLevel);
+  }
+
+  Future<void> setZoomLevel(double zoomLevel, [void Function(double)? onZoomChanged]) async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    try {
+      double zoom = zoomLevel.clamp(minZoomLevel, maxZoomLevel);
+      await controller.setZoomLevel(zoom);
+      if (onZoomChanged != null) onZoomChanged(zoom);
+    } catch (_) {}
   }
 
   Future<void> focusOnScreenPosition(

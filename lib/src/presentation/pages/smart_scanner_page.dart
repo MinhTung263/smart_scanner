@@ -57,7 +57,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   // Shared by the corner guide-frame entrance animation and the detection
   // warmup gate below, so a barcode already in frame on open can't be
   // accepted before the guide frame has visibly arrived.
-  static const _introDuration = Duration(milliseconds: 350);
+  static const _introDuration = Duration(milliseconds: 650);
 
   late AnimationController _cornerController;
   late AnimationController _loadingController;
@@ -478,9 +478,11 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
                       _triggerVibration();
 
-                      // Pause camera and return result instantly (0ms delay)
-                      _scannerKey.currentState?.pauseCamera();
+                      // Wait 200ms for green lock animation to finish before popping result
+                      await Future.delayed(const Duration(milliseconds: 200));
+
                       if (context.mounted) {
+                        _scannerKey.currentState?.pauseCamera();
                         if (ModalRoute.of(context)?.isCurrent == true) {
                           Navigator.of(
                             context,
@@ -549,7 +551,16 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                     ScannerTopBar(
                       onPickImage: _pickImageFromGallery,
                       onToggleFlash: _toggleFlash,
+                      onBack: () => _scannerKey.currentState?.pauseCamera(),
                       isTorchOn: _isTorchOn,
+                      currentZoom: _controller.currentZoom,
+                      onZoomChanged: (val) {
+                        _controller.setZoom(val);
+                        _scannerKey.currentState?.setZoom(val);
+                      },
+                      onZoomChangeEnd: (val) {
+                        _scannerKey.currentState?.refocus();
+                      },
                       finishWidget:
                           (_controller.isMultiScan &&
                               _controller.scannedBarcodes.isNotEmpty)

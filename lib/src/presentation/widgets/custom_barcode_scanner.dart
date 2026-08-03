@@ -35,7 +35,7 @@ class CustomBarcodeScanner extends StatefulWidget {
     required this.onDetect,
     this.formats = const [BarcodeFormat.all],
     this.showBoundingBox = true,
-    this.boundingBoxColor = Colors.red,
+    this.boundingBoxColor = const Color(0xFF10B981),
     this.scanWindow,
     this.loadingIcon,
     this.overlayBuilder,
@@ -50,15 +50,17 @@ class CustomBarcodeScanner extends StatefulWidget {
 }
 
 class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   late final CameraService _cameraService;
   late final BarcodeScannerService _barcodeScannerService;
   late final AnimationController _pulseController;
+  late final AnimationController _lockController;
   Timer? _clearBarcodesTimer;
   Timer? _periodicRefocusTimer;
 
   bool _isDisposed = false;
   bool _isBusy = false;
+  bool _isAutoZooming = false;
   int _lastProcessTime = 0;
   double _currentZoom = 1.0;
   String? _cameraError;
@@ -71,9 +73,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   // scanning sessions. Speeds back up the instant motion resumes or a code
   // appears, so it never trades away responsiveness while actually scanning.
   static const int _activeThrottleMs = 20; // ~50 FPS cap
-  static const int _idleThrottleMs = 100; // ~10 FPS cap
+  static const int _idleThrottleMs = 250; // ~4 FPS cap
   static const int _idleGraceMs = 1500; // how long without activity before backing off
+  static const int _autoPauseTimeoutMs = 60000; // Auto-pause after 60s idle
   late int _lastActivityAtMs;
+  late int _lastUserActivityMs;
+  bool _isAutoPaused = false;
+  Timer? _inactivityCheckTimer;
 
   // Guards CameraPreview against CameraController's async teardown.
   // AnimatedSwitcher keeps the outgoing "camera_preview" branch mounted (and
@@ -147,6 +153,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _lastActivityAtMs = DateTime.now().millisecondsSinceEpoch;
+    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+    _startInactivityChecker();
 
     _detectionReadyAtMs = DateTime.now()
         .add(widget.detectionWarmupDelay)
@@ -159,6 +167,11 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     )..repeat(reverse: true);
+
+    _lockController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
 
     // Delay initialization slightly so that the route transition animation (push)
     // runs at 60fps smoothly before the heavy native camera blocks the main thread.
@@ -198,8 +211,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   /// once the phone is moved in close.
   void _startPeriodicRefocus() {
     _periodicRefocusTimer?.cancel();
-    _periodicRefocusTimer = Timer.periodic(const Duration(milliseconds: 900), (_) {
-      if (!mounted || _isDisposed) return;
+    _periodicRefocusTimer = Timer.periodic(const Duration(milliseconds: 3000), (_) {
+      if (!mounted || _isDisposed || _isAutoPaused) return;
       // Leave a working focus alone once a code is actually in frame.
       if (_recognizedBarcodes.isEmpty) {
         _refocusOnScanWindow();
@@ -210,6 +223,42 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   void _stopPeriodicRefocus() {
     _periodicRefocusTimer?.cancel();
     _periodicRefocusTimer = null;
+  }
+
+  void _startInactivityChecker() {
+    _inactivityCheckTimer?.cancel();
+    _inactivityCheckTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || _isDisposed || _isAutoPaused) return;
+      final int now = DateTime.now().millisecondsSinceEpoch;
+      if (now - _lastUserActivityMs > _autoPauseTimeoutMs) {
+        _triggerAutoPause();
+      }
+    });
+  }
+
+  void _triggerAutoPause() {
+    if (_isAutoPaused || !mounted || _isDisposed) return;
+    _stopPeriodicRefocus();
+    _pulseController.stop();
+    _lockController.stop();
+    _cameraAlive.value = false;
+    _cameraService.stopLiveFeed(onUpdateUI: _handleCameraUpdateUI);
+    setState(() {
+      _isAutoPaused = true;
+    });
+  }
+
+  Future<void> _resumeFromAutoPause() async {
+    if (!_isAutoPaused || _isDisposed || !mounted) return;
+    setState(() {
+      _isAutoPaused = false;
+    });
+    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+    _lastActivityAtMs = DateTime.now().millisecondsSinceEpoch;
+    if (!_pulseController.isAnimating) {
+      _pulseController.repeat(reverse: true);
+    }
+    await _initializeCamera();
   }
 
   void _handleZoomInitialized(double zoom) {
@@ -246,7 +295,9 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   @override
   void dispose() {
     _pulseController.dispose();
+    _lockController.dispose();
     _clearBarcodesTimer?.cancel();
+    _inactivityCheckTimer?.cancel();
     _stopPeriodicRefocus();
     _cameraAlive.value = false;
     _cameraAlive.dispose();
@@ -327,6 +378,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
 
     if (isMoving || justSettled || barcodes.isNotEmpty) {
       _lastActivityAtMs = now;
+      _lastUserActivityMs = now;
     }
 
     if (justSettled && mounted && !_isDisposed) {
@@ -344,15 +396,10 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     );
 
     if (mounted && !_isDisposed) {
-      // Ignore anything found while the entrance UI is still settling in,
-      // so a code already in frame on open doesn't get accepted instantly.
-      if (barcodes.isNotEmpty && now >= _detectionReadyAtMs) {
-        _clearBarcodesTimer?.cancel();
-
+      if (now >= _detectionReadyAtMs) {
         final controller = _cameraService.controller;
         final previewSize = controller?.value.previewSize;
         final imageSize = Size(image.width.toDouble(), image.height.toDouble());
-
 
         if (previewSize != null) {
           final filteredBarcodes = _barcodeScannerService.filterAndSortBarcodes(
@@ -363,31 +410,67 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
             widget.scanWindow,
           );
 
-
-          setState(() {
-            _recognizedBarcodes = filteredBarcodes;
-          });
+          if (_recognizedBarcodes.isEmpty && filteredBarcodes.isNotEmpty) {
+            _clearBarcodesTimer?.cancel();
+            _clearBarcodesTimer = null;
+            _lockController.forward(from: 0.0);
+          }
 
           if (filteredBarcodes.isNotEmpty) {
+            _clearBarcodesTimer?.cancel();
+            _clearBarcodesTimer = null;
+            setState(() {
+              _recognizedBarcodes = filteredBarcodes;
+            });
+
+            final firstBarcode = filteredBarcodes.first;
+            final mappedRect = BarcodeScannerService.mapMlKitRectToScreen(
+              rawRect: firstBarcode.boundingBox,
+              previewSize: previewSize,
+              screenSize: screenSize,
+            );
+            _autoZoomToBarcode(mappedRect, screenSize);
             widget.onDetect(filteredBarcodes);
-          }
-        }
-      } else {
-        // Debounce clearing the barcodes to prevent flickering on frame drops
-        if (_recognizedBarcodes.isNotEmpty &&
-            (_clearBarcodesTimer == null || !_clearBarcodesTimer!.isActive)) {
-          _clearBarcodesTimer = Timer(const Duration(milliseconds: 300), () {
-            if (mounted && !_isDisposed) {
-              setState(() {
-                _recognizedBarcodes = [];
+          } else if (_recognizedBarcodes.isNotEmpty) {
+            // Barcodes lost: play reverse exit animation (fade-out & scale-out) smoothly back to hidden state
+            if (_clearBarcodesTimer == null || !_clearBarcodesTimer!.isActive) {
+              _lockController.reverse();
+              _clearBarcodesTimer = Timer(const Duration(milliseconds: 200), () {
+                if (mounted && !_isDisposed) {
+                  setState(() {
+                    _recognizedBarcodes = [];
+                  });
+                }
               });
             }
-          });
+          }
         }
       }
     }
 
     _isBusy = false;
+  }
+
+  Future<void> _autoZoomToBarcode(Rect mappedRect, Size screenSize) async {
+    if (_isAutoZooming || !_cameraService.isInitialized || _cameraService.maxZoomLevel <= 1.0) return;
+
+    final scanWinWidth = widget.scanWindow?.width ?? (screenSize.width * 0.7);
+    final double qrRatio = (mappedRect.width / scanWinWidth).clamp(0.05, 1.0);
+
+    if (qrRatio < 0.5) {
+      final double targetZoom = (_currentZoom * (0.55 / qrRatio)).clamp(
+        _cameraService.minZoomLevel,
+        _cameraService.maxZoomLevel,
+      );
+
+      if ((targetZoom - _currentZoom).abs() > 0.2) {
+        _isAutoZooming = true;
+        _currentZoom = targetZoom;
+        await _cameraService.setZoomLevel(targetZoom, widget.onZoomChanged);
+        await Future.delayed(const Duration(milliseconds: 300));
+        _isAutoZooming = false;
+      }
+    }
   }
 
   void setZoom(double zoomLevel) {
@@ -412,9 +495,14 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     _cameraService.focusOnScanWindow(scanWindow, MediaQuery.of(context).size);
   }
 
-  Future<void> pauseCamera() async {
-    if (_cameraService.controller?.value.isStreamingImages == true) {
-      await _cameraService.controller?.stopImageStream();
+  void pauseCamera() {
+    _cameraAlive.value = false;
+    _pulseController.stop();
+    _lockController.stop();
+    _stopPeriodicRefocus();
+    final controller = _cameraService.controller;
+    if (controller != null && controller.value.isInitialized && controller.value.isStreamingImages) {
+      controller.stopImageStream().catchError((_) {});
     }
   }
 
@@ -494,10 +582,17 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
           child: (isCameraReady && controller != null)
               ? GestureDetector(
                   key: const ValueKey('camera_preview'),
-                  onScaleStart: _handleScaleStart,
-                  onScaleUpdate: _handleScaleUpdate,
+                  onScaleStart: (details) {
+                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+                    _handleScaleStart(details);
+                  },
+                  onScaleUpdate: (details) {
+                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+                    _handleScaleUpdate(details);
+                  },
                   onScaleEnd: (details) => _refocusOnScanWindow(),
                   onDoubleTap: () {
+                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
                     // Toggle between the default zoom and the max available,
                     // for a quick zoom-in on small barcodes. Anchored to the
                     // camera's own default/max instead of hardcoded values, so
@@ -516,6 +611,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                     }
                   },
                   onTapDown: (details) {
+                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
                     final scanWindow = widget.scanWindow;
                     final Offset focusIndicatorPoint;
                     if (scanWindow != null && scanWindow.contains(details.localPosition)) {
@@ -581,7 +677,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
             _recognizedBarcodes.isNotEmpty &&
             isCameraReady)
           AnimatedBuilder(
-            animation: _pulseController,
+            animation: Listenable.merge([_pulseController, _lockController]),
             builder: (context, child) {
               return CustomPaint(
                 painter: BarcodeOverlayPainter(
@@ -590,6 +686,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                   screenSize: size,
                   color: widget.boundingBoxColor,
                   pulseValue: _pulseController.value,
+                  lockValue: _lockController.value,
                   zoomLevel: _currentZoom,
                 ),
               );
@@ -644,6 +741,58 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                 onCompleted: () {
                   if (mounted) setState(() => _focusIndicatorPosition = null);
                 },
+              ),
+            ),
+          ),
+
+        if (_isAutoPaused)
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: _resumeFromAutoPause,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.85),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.pause_circle_outline_rounded,
+                            color: Colors.white,
+                            size: 56,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const Text(
+                          'Đã tạm dừng để tiết kiệm pin & làm mát máy',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Chạm vào màn hình để tiếp tục quét',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.7),
+                            fontSize: 14,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
