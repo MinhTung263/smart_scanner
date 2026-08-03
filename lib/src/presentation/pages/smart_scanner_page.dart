@@ -66,8 +66,18 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
   /// Current status of gallery picking & image decoding.
   _GalleryStatus _galleryStatus = _GalleryStatus.idle;
+  bool _isTorchOn = false;
 
   bool get _isPickingImage => _galleryStatus != _GalleryStatus.idle;
+
+  Future<void> _toggleFlash() async {
+    final isOn = await _scannerKey.currentState?.toggleFlash();
+    if (isOn != null && mounted) {
+      setState(() {
+        _isTorchOn = isOn;
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -538,6 +548,8 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
                     ScannerTopBar(
                       onPickImage: _pickImageFromGallery,
+                      onToggleFlash: _toggleFlash,
+                      isTorchOn: _isTorchOn,
                       finishWidget:
                           (_controller.isMultiScan &&
                               _controller.scannedBarcodes.isNotEmpty)

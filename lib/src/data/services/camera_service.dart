@@ -364,4 +364,21 @@ class CameraService {
   void cancelZoomTimer() {
     _zoomTimer?.cancel();
   }
+
+  bool _isTorchOn = false;
+  bool get isTorchOn => _isTorchOn;
+
+  /// Toggles flash mode (torch on/off). Returns updated torch state.
+  Future<bool> toggleTorch() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return false;
+
+    try {
+      _isTorchOn = !_isTorchOn;
+      await controller.setFlashMode(_isTorchOn ? FlashMode.torch : FlashMode.off);
+    } catch (_) {
+      _isTorchOn = false;
+    }
+    return _isTorchOn;
+  }
 }

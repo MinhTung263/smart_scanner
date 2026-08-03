@@ -5,9 +5,17 @@ import 'glass_container.dart';
 
 class ScannerTopBar extends StatelessWidget {
   final VoidCallback? onPickImage;
+  final VoidCallback? onToggleFlash;
+  final bool isTorchOn;
   final Widget? finishWidget;
 
-  const ScannerTopBar({super.key, this.onPickImage, this.finishWidget});
+  const ScannerTopBar({
+    super.key,
+    this.onPickImage,
+    this.onToggleFlash,
+    this.isTorchOn = false,
+    this.finishWidget,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +46,28 @@ class ScannerTopBar extends StatelessWidget {
               children: [
                 if (finishWidget != null) ...[
                   finishWidget!,
+                  const SizedBox(width: 12),
+                ],
+                if (onToggleFlash != null) ...[
+                  GlassContainer(
+                    padding: const EdgeInsets.all(10),
+                    borderRadius: 16,
+                    backgroundColor: isTorchOn
+                        ? const Color(0xFFFBBF24).withValues(alpha: 0.25)
+                        : null,
+                    child: InkWell(
+                      onTap: onToggleFlash,
+                      child: Icon(
+                        isTorchOn
+                            ? Icons.flash_on_rounded
+                            : Icons.flash_off_rounded,
+                        color: isTorchOn
+                            ? const Color(0xFFFBBF24)
+                            : Colors.white,
+                        size: 22,
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 12),
                 ],
                 if (onPickImage != null)

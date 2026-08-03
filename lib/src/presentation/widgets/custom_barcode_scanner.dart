@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 
 import '../../data/services/barcode_scanner_service.dart';
@@ -230,6 +231,17 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     );
     _cameraService.cancelZoomTimer();
   }
+
+  /// Toggles camera flash (torch) and returns new state.
+  Future<bool> toggleFlash() async {
+    final isOn = await _cameraService.toggleTorch();
+    try {
+      HapticFeedback.lightImpact();
+    } catch (_) {}
+    return isOn;
+  }
+
+  bool get isTorchOn => _cameraService.isTorchOn;
 
   @override
   void dispose() {
