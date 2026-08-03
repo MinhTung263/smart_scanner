@@ -50,7 +50,6 @@ class CameraService {
     void Function(double zoom)? onZoomInitialized,
   }) async {
     final sw = Stopwatch()..start();
-    debugPrint('[SmartScanner][perf] initializeCamera() start');
 
     // Wait for any previous camera instance to finish disposing before starting a new one
     if (_globalDisposeFuture != null) {
@@ -58,19 +57,15 @@ class CameraService {
         await _globalDisposeFuture;
       } catch (_) {}
     }
-    debugPrint('[SmartScanner][perf] dispose-wait done: ${sw.elapsedMilliseconds}ms');
 
     if (_cameras.isEmpty) {
       if (_cachedCameras != null && _cachedCameras!.isNotEmpty) {
         _cameras = _cachedCameras!;
-        debugPrint('[SmartScanner][perf] camera list from warm cache: ${sw.elapsedMilliseconds}ms');
       } else {
         try {
           _cameras = await availableCameras();
           _cachedCameras = _cameras;
-          debugPrint('[SmartScanner][perf] availableCameras() (cold, not warmed up) resolved: ${sw.elapsedMilliseconds}ms');
         } catch (e) {
-          debugPrint('Error getting cameras: $e');
           return 'Lỗi truy cập camera: $e';
         }
       }
@@ -127,7 +122,6 @@ class CameraService {
     try {
       _initializeControllerFuture = controller.initialize();
       await _initializeControllerFuture;
-      debugPrint('[SmartScanner][perf] controller.initialize() done: ${sw?.elapsedMilliseconds}ms');
 
       // If stopLiveFeed was called during initialization (e.g., app went to background for permission dialog),
       // _controller will be null. We must abort to prevent using a disposed controller.
@@ -142,7 +136,6 @@ class CameraService {
       minZoomLevel = zoomLevels[0];
       final nativeMax = zoomLevels[1];
       maxZoomLevel = nativeMax > 2.5 ? 2.5 : nativeMax;
-      debugPrint('[SmartScanner][perf] zoom levels fetched: ${sw?.elapsedMilliseconds}ms');
 
       if (isDisposedCheck() || _controller != controller) {
         return null;
@@ -150,13 +143,10 @@ class CameraService {
 
       await _ensureContinuousAutofocus(controller);
       await _applyDefaultZoom(controller, onZoomInitialized);
-      debugPrint('[SmartScanner][perf] default zoom applied: ${sw?.elapsedMilliseconds}ms');
 
       await controller.startImageStream(onImageStream);
-      debugPrint('[SmartScanner][perf] startImageStream() done, preview should show now: ${sw?.elapsedMilliseconds}ms');
       onUpdateUI();
     } on CameraException catch (e) {
-      debugPrint('CameraException: ${e.code}: ${e.description}');
 
       // Fallback if NV21 is not supported on this Android device
       if (Platform.isAndroid && e.code == 'UnsupportedImageFormat') {
@@ -182,7 +172,6 @@ class CameraService {
       }
       onUpdateUI();
     } catch (e) {
-      debugPrint('Error initializing camera: $e');
       if (!e.toString().contains('used after being disposed')) {
         errorMsg = 'Lỗi hệ thống camera: $e';
         onUpdateUI();
@@ -245,7 +234,6 @@ class CameraService {
       await controller.setZoomLevel(zoom);
       onZoomInitialized?.call(zoom);
     } catch (e) {
-      debugPrint('Error applying default zoom: $e');
     }
   }
 
@@ -257,7 +245,6 @@ class CameraService {
     try {
       await controller.setFocusMode(FocusMode.auto);
     } catch (e) {
-      debugPrint('Error setting continuous autofocus: $e');
     }
   }
 
@@ -296,7 +283,6 @@ class CameraService {
         await cameraController.dispose();
       }
     } catch (e) {
-      debugPrint('Error disposing camera: $e');
     } finally {
       if (onScannerClose != null) {
         try {
@@ -372,7 +358,6 @@ class CameraService {
         await controller.setExposurePoint(null);
       }
     } catch (e) {
-      debugPrint('Error during refocus: $e');
     }
   }
 

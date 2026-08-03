@@ -591,7 +591,6 @@ class BarcodeScannerService {
           : results.map((b) => _translateBarcode(b, cropOffset)).toList();
       return (translated, justSettled, isMoving, isBlurry, hasGlare);
     } catch (e) {
-      debugPrint('Error scanning barcodes: $e');
       return (<Barcode>[], justSettled, isMoving, isBlurry, hasGlare);
     }
   }
@@ -657,7 +656,8 @@ class BarcodeScannerService {
           screenSize: screenSize,
         );
 
-        return !effectiveScanWindow.contains(mappedRect.center);
+        final bool inside = effectiveScanWindow.contains(mappedRect.center);
+        return !inside;
       });
 
       // The 20% padding is meant to forgive imprecision for a single code —

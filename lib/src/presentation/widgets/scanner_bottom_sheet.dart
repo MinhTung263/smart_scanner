@@ -198,15 +198,17 @@ class ScannerBottomSheet extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(
-                      !hasBarcodesInFrame ? Icons.document_scanner : Icons.check_circle,
-                      color: !hasBarcodesInFrame ? Colors.white54 : Colors.greenAccent,
+                      hasBarcodesInFrame ? Icons.check_circle : Icons.document_scanner,
+                      color: hasBarcodesInFrame ? Colors.greenAccent : Colors.white54,
                       size: 20,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      !hasBarcodesInFrame ? 'Đưa mã vạch vào khung hình' : 'Phát hiện mã vạch',
+                      hasBarcodesInFrame
+                          ? (isQRMode ? 'Phát hiện QR Code' : 'Phát hiện mã vạch')
+                          : (isQRMode ? 'Đưa QR Code vào khung hình' : 'Đưa mã vạch vào khung hình'),
                       style: TextStyle(
-                        color: !hasBarcodesInFrame ? Colors.white70 : Colors.white,
+                        color: hasBarcodesInFrame ? Colors.white : Colors.white70,
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                       ),

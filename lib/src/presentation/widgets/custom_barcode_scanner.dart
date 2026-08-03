@@ -341,6 +341,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
         final previewSize = controller?.value.previewSize;
         final imageSize = Size(image.width.toDouble(), image.height.toDouble());
 
+
         if (previewSize != null) {
           final filteredBarcodes = _barcodeScannerService.filterAndSortBarcodes(
             barcodes,
@@ -349,6 +350,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
             screenSize,
             widget.scanWindow,
           );
+
 
           setState(() {
             _recognizedBarcodes = filteredBarcodes;

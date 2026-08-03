@@ -20,10 +20,7 @@ class SmartScanner {
   /// of blocking the scanner screen on open. Safe to call multiple times —
   /// later calls are instant no-ops once the camera list is cached.
   static Future<void> warmUp() async {
-    final sw = Stopwatch()..start();
-    debugPrint('[SmartScanner][perf] warmUp() start');
     await CameraService.preloadCameras();
-    debugPrint('[SmartScanner][perf] warmUp() done: ${sw.elapsedMilliseconds}ms');
   }
 
   /// Opens the smart scanner screen and returns the scanned result(s).

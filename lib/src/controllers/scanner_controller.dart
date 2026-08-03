@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:smart_scanner/src/domain/entities/scanned_barcode.dart';
 
 import '../domain/usecases/barcode_processor_usecase.dart';
@@ -69,15 +68,10 @@ class ScannerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool processMultiScanBarcodes(List<Barcode> barcodes) {
-    if (barcodes.isEmpty) return false;
-
-    final newBarcodeValues = barcodes
-        .map((b) => b.displayValue ?? b.rawValue)
-        .where((val) => val != null)
-        .cast<String>()
-        .toList();
-
+  /// Processes newly-scanned barcode values (already extracted as strings, so
+  /// this doesn't care which engine — ML Kit, ZXing, or otherwise — decoded
+  /// them).
+  bool processMultiScanValues(List<String> newBarcodeValues) {
     if (newBarcodeValues.isEmpty) return false;
 
     final (updatedBarcodes, hasNewOrIncremented) = _barcodeProcessor
