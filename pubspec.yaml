@@ -1,7 +1,9 @@
 name: smart_scanner
-description: "A new Flutter package project."
-version: 0.0.1
-homepage:
+description: A high-performance, battery & heat-optimized Flutter package for Barcode and QR Code scanning powered by Google ML Kit.
+version: 0.0.2
+homepage: https://github.com/MinhTung263/smart_scanner
+repository: https://github.com/MinhTung263/smart_scanner
+issue_tracker: https://github.com/MinhTung263/smart_scanner/issues
 
 environment:
   sdk: ^3.11.0

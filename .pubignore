@@ -1,0 +1,4 @@
+smart_scanner_app/
+*.iml
+.idea/
+.vscode/

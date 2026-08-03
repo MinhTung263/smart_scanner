@@ -1,14 +1,23 @@
 # Smart Scanner
 
-A high-performance Flutter package for Barcode and QR Code scanning, powered by Google ML Kit and optimized for mobile devices and Android POS terminals (Sunmi V3, Honeywell, Zebra, etc.).
+A high-performance, battery & heat-optimized Flutter package for Barcode and QR Code scanning, powered by Google ML Kit and optimized for mobile devices and Android POS terminals (Sunmi V3, Honeywell, Zebra, etc.).
 
-## Features
+[![pub package](https://img.shields.io/pub/v/smart_scanner.svg)](https.pub.dev/packages/smart_scanner)
 
-- **High-Performance Scanning**: Powered by Google ML Kit with zero-allocation memory buffers (60 FPS UI performance).
-- **Adaptive Contrast Enhancement**: Auto-stretches low-contrast image frames to detect small or blurry 1D/2D barcodes.
-- **POS & Sunmi V3 Hardware Ready**: Supports physical haptic vibration feedback on Sunmi V3 and Android POS devices.
-- **Multi-Scan & Single Scan**: Built-in UI for single scan return or multi-item inventory scanning.
-- **Gallery Image Picker**: Option to scan barcodes directly from gallery images.
+## Key Features
+
+- ⚡ **High-Performance Scanning**: Powered by Google ML Kit with zero-allocation memory buffers (50+ FPS active UI performance).
+- ❄️ **Battery & Thermal Efficiency**:
+  - **720p Optimized Stream**: Cuts pixel processing and memory channel transfer load by >50%.
+  - **Adaptive Throttling**: Automatically backs off frame decoding to ~4 FPS when stationary, springing instantly back to 50 FPS on motion.
+  - **Auto-Sleep / Inactivity Pause**: Pauses camera stream after 60s of idle time with a tap-to-resume glassmorphism overlay.
+- 🎯 **Modern Top AppBar Controls**:
+  - **Single-Tap Cycle Zoom**: Centered `1x` ➔ `2x` ➔ `3x` ➔ `1x` cycle button with a modern viewfinder lens icon (`Icons.center_focus_strong_rounded`).
+  - **Amber Glow Flash Button**: Modern minimalist bolt icon with soft golden glow when active.
+- 🔍 **Adaptive Contrast Enhancement**: Auto-stretches low-contrast image frames to detect small or washed-out 1D/2D barcodes.
+- 📱 **POS & Sunmi V3 Hardware Ready**: Supports physical haptic vibration feedback on Sunmi V3 and Android POS devices.
+- 📦 **Multi-Scan & Single Scan**: Built-in UI for single scan return or multi-item inventory scanning.
+- 🖼️ **Gallery Image Picker**: Scan barcodes directly from photos in the gallery.
 
 ## Setup
 
@@ -44,7 +53,7 @@ Add the Camera usage description to your `ios/Runner/Info.plist`:
 <string>Ứng dụng cần quyền sử dụng Camera để quét mã vạch và mã QR.</string>
 ```
 
-## Quick Usage
+## Usage
 
 ### 1. Single Barcode Scan
 
@@ -79,3 +88,7 @@ if (result != null && result.isMultiScan) {
   });
 }
 ```
+
+## License
+
+MIT License
