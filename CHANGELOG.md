@@ -1,13 +1,21 @@
 ## 0.0.2
 
-- **Performance & Thermal Optimizations**:
-  - Reduced default resolution to 720p (`ResolutionPreset.high`) to decrease CPU/GPU thermal load and memory transfers by >50%.
-  - Relaxed software re-focus interval to 3s to prevent camera lens motor overheating.
-  - Added Adaptive Frame Throttling (~4 FPS when static, 50 FPS when active).
-  - Added Auto-Sleep inactivity timer (60s) with tap-to-resume UI overlay.
-- **UI & UX Controls Redesign**:
-  - Centered compact single-tap Zoom button (`1x` ➔ `2x` ➔ `3x` ➔ `1x`) with camera viewfinder icon (`Icons.center_focus_strong_rounded`) on the top AppBar.
-  - Redesigned Flash button with minimalist bolt icon and gold amber glow when active.
+- **Completion Celebration & Animation Effects**:
+  - Added animated completion overlay with elastic scale bounce, checkmark icon, custom title ("Quét thành công!", "Quét hoàn tất!"), and heavy haptic feedback.
+  - Enabled completion animation overlay for both Single Scan and Multi Scan modes.
+  - Added snappy entrance & exit transitions (`200ms` cubic ease) for the finish button.
+
+- **Scanner Controls & Layout Improvements**:
+  - Repositioned "Quét liên tục" (Multi-scan) toggle button to the top-right area above the scan window.
+  - Added pixel-perfect right alignment flush with the scan frame border.
+  - Fixed control button positioning so it stays stationary during camera zoom and never overlaps the scan frame at maximum zoom.
+  - Refined the "Hoàn tất" button layout with side padding and prominent CTA style.
+  - Preserved scanned barcode list when toggling continuous scanning mode.
+
+- **Gesture & Camera Performance Optimizations**:
+  - Restricted Tap-to-Focus gesture to only trigger within the `scanWindow` boundary.
+  - Fixed 2-finger pinch-zoom stuttering with an async lock (`_isSettingZoom`) and micro-jitter filtering for smooth 60 FPS camera zoom.
+  - Reduced thermal load and improved camera lifecycle management during backgrounding/pausing.
 
 ## 0.0.1
 
