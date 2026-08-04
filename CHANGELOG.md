@@ -1,4 +1,4 @@
-## 0.0.2
+## 0.0.3
 
 - **Completion Celebration & Animation Effects**:
   - Added animated completion overlay with elastic scale bounce, checkmark icon, custom title ("Quét thành công!", "Quét hoàn tất!"), and heavy haptic feedback.
@@ -15,7 +15,18 @@
 - **Gesture & Camera Performance Optimizations**:
   - Restricted Tap-to-Focus gesture to only trigger within the `scanWindow` boundary.
   - Fixed 2-finger pinch-zoom stuttering with an async lock (`_isSettingZoom`) and micro-jitter filtering for smooth 60 FPS camera zoom.
-  - Reduced thermal load and improved camera lifecycle management during backgrounding/pausing.
+
+## 0.0.2
+
+- **Core Scanner Features**:
+  - High-performance Barcode and QR code scanning powered by Google ML Kit.
+  - Single Scan and Multi-Scan (continuous scanning) modes with real-time barcode tracking.
+  - Gallery photo picker with high-resolution image decoding (ZXing & ML Kit fallback).
+  - Customizable UI builders (`bottomWidgetBuilder`, `multiScanFinishButtonBuilder`, `multiScanItemBuilder`, `multiScanSummaryBuilder`).
+  - Flashlight (torch) control and smooth zoom controls (`1x`, `2x`, `3x`).
+- **Performance & Thermal Optimizations**:
+  - Reduced default resolution to 720p (`ResolutionPreset.high`) to cut CPU/GPU thermal load.
+  - Added Adaptive Frame Throttling and Auto-Sleep inactivity timer (60s).
 
 ## 0.0.1
 
