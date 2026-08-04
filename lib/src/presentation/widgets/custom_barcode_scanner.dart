@@ -514,12 +514,17 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   }
 
   void _handleScaleUpdate(ScaleUpdateDetails details) {
+    if (details.pointerCount < 2) return;
     if (widget.onWindowScaleUpdate != null) {
       widget.onWindowScaleUpdate!(details.scale);
     }
     _cameraService.handleScaleUpdate(details.scale, (zoomLevel) {
-      _currentZoom = zoomLevel;
-      if (widget.onZoomChanged != null) widget.onZoomChanged!(zoomLevel);
+      if (mounted && !_isDisposed) {
+        _currentZoom = zoomLevel;
+        if (widget.onZoomChanged != null) {
+          widget.onZoomChanged!(zoomLevel);
+        }
+      }
     });
   }
 
@@ -613,23 +618,15 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                   onTapDown: (details) {
                     _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
                     final scanWindow = widget.scanWindow;
-                    final Offset focusIndicatorPoint;
-                    if (scanWindow != null && scanWindow.contains(details.localPosition)) {
-                      // Focus the scan window's center rather than the exact
-                      // tap point: the barcode itself is high-contrast and
-                      // easy for autofocus to lock onto, but a slightly
-                      // off-target tap can land on low-contrast background
-                      // next to it, where autofocus struggles to converge at
-                      // all — confirmed by zoom's center-based refocus
-                      // achieving focus at distances where exact-tap focus
-                      // didn't.
-                      _refocusOnScanWindow();
-                      focusIndicatorPoint = scanWindow.center;
+                    if (scanWindow != null) {
+                      if (scanWindow.contains(details.localPosition)) {
+                        _refocusOnScanWindow();
+                        _showFocusIndicatorAt(scanWindow.center);
+                      }
                     } else {
                       _cameraService.focusOnScreenPosition(context, details);
-                      focusIndicatorPoint = details.localPosition;
+                      _showFocusIndicatorAt(details.localPosition);
                     }
-                    _showFocusIndicatorAt(focusIndicatorPoint);
                   },
                   child: SizedBox.expand(
                     child: FittedBox(
@@ -747,53 +744,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
 
         if (_isAutoPaused)
           Positioned.fill(
-            child: GestureDetector(
-              onTap: _resumeFromAutoPause,
-              behavior: HitTestBehavior.opaque,
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.85),
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.pause_circle_outline_rounded,
-                            color: Colors.white,
-                            size: 56,
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        const Text(
-                          'Đã tạm dừng để tiết kiệm pin & làm mát máy',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Chạm vào màn hình để tiếp tục quét',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 14,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            child: _AutoPauseOverlay(
+              onResume: _resumeFromAutoPause,
             ),
           ),
       ],
@@ -946,6 +898,181 @@ class _ScannerLoadingAnimationState extends State<_ScannerLoadingAnimation>
                 widget.icon ?? Icons.qr_code_scanner,
                 color: Colors.white.withValues(alpha: 0.9),
                 size: 52,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AutoPauseOverlay extends StatefulWidget {
+  final VoidCallback onResume;
+  const _AutoPauseOverlay({required this.onResume});
+
+  @override
+  State<_AutoPauseOverlay> createState() => _AutoPauseOverlayState();
+}
+
+class _AutoPauseOverlayState extends State<_AutoPauseOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+  late final Animation<double> _scaleAnimation;
+  late final Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+
+    _scaleAnimation = Tween<double>(begin: 0.95, end: 1.05).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _pulseAnimation = Tween<double>(begin: 0.2, end: 0.6).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      builder: (context, opacity, child) {
+        return Opacity(
+          opacity: opacity,
+          child: GestureDetector(
+            onTap: widget.onResume,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.82),
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // --- Pulsing glowing icon container ---
+                      AnimatedBuilder(
+                        animation: _pulseController,
+                        builder: (context, child) {
+                          return Transform.scale(
+                            scale: _scaleAnimation.value,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                // Outer pulsing aura
+                                Container(
+                                  width: 110,
+                                  height: 110,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: const Color(0xFF10B981)
+                                        .withValues(alpha: _pulseAnimation.value * 0.3),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFF10B981)
+                                            .withValues(alpha: _pulseAnimation.value * 0.5),
+                                        blurRadius: 30,
+                                        spreadRadius: 10,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                // Inner glass circle
+                                Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: const Color(0xFF1F2937),
+                                    border: Border.all(
+                                      color: const Color(0xFF10B981)
+                                          .withValues(alpha: 0.6),
+                                      width: 2,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.4),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.play_arrow_rounded,
+                                    color: Color(0xFF10B981),
+                                    size: 44,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 28),
+                      // --- Title ---
+                      const Text(
+                        'Máy quét đang ở chế độ chờ',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.3,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 10),
+                      // --- Subtitle with touch hint ---
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.12),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.touch_app_rounded,
+                              color: Color(0xFF10B981),
+                              size: 16,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Chạm vào màn hình để tiếp tục quét',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),

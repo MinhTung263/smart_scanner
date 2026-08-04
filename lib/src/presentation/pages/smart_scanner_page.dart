@@ -103,6 +103,50 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
     super.dispose();
   }
 
+  bool _isCompleting = false;
+  String? _completionSubtitle;
+
+  void _finishSingleScan(String barcode) {
+    if (_isCompleting) return;
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (_) {}
+    setState(() {
+      _isCompleting = true;
+      _completionSubtitle = 'Đã quét mã: $barcode';
+    });
+
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        _scannerKey.currentState?.pauseCamera();
+        Navigator.of(context).pop(SmartScannerResult.single(barcode));
+      }
+    });
+  }
+
+  void _finishScanning() {
+    if (_isCompleting) return;
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (_) {}
+    setState(() {
+      _isCompleting = true;
+      _completionSubtitle = null;
+    });
+
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.of(context).pop(
+          SmartScannerResult.multi(
+            _controller.scannedBarcodes.map(
+              (k, v) => MapEntry(k, v.count),
+            ),
+          ),
+        );
+      }
+    });
+  }
+
   List<BarcodeFormat> get _scannerFormats => widget.isQRMode
       ? const [BarcodeFormat.qrCode]
       : const [
@@ -209,7 +253,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
       if (values.isNotEmpty) {
         if (!_controller.isMultiScan) {
-          Navigator.of(context).pop(SmartScannerResult.single(values.first));
+          _finishSingleScan(values.first);
         } else {
           _controller.processMultiScanValues(values);
           _showSnackBar(
@@ -475,20 +519,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                     if (firstBarcode != null) {
                       _controller.setProcessing(true);
                       _controller.setLatestBarcode(firstBarcode);
-
-                      _triggerVibration();
-
-                      // Wait 200ms for green lock animation to finish before popping result
-                      await Future.delayed(const Duration(milliseconds: 200));
-
-                      if (context.mounted) {
-                        _scannerKey.currentState?.pauseCamera();
-                        if (ModalRoute.of(context)?.isCurrent == true) {
-                          Navigator.of(
-                            context,
-                          ).pop(SmartScannerResult.single(firstBarcode));
-                        }
-                      }
+                      _finishSingleScan(firstBarcode);
                     }
                   } else {
                     final values = barcodes
@@ -511,6 +542,153 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                 }
               },
               overlayBuilder: (context, barcodes, imageSize) {
+                final finishButtonWidget =
+                    (_controller.isMultiScan &&
+                        _controller.scannedBarcodes.isNotEmpty)
+                    ? (widget.multiScanFinishButtonBuilder != null
+                          ? widget.multiScanFinishButtonBuilder!(
+                              context,
+                              _controller.scannedBarcodes.map(
+                                (k, v) => MapEntry(k, v.count),
+                              ),
+                              _finishScanning,
+                            )
+                          : Container(
+                              height: 64,
+                              margin: const EdgeInsets.symmetric(horizontal: 12),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    Color(0xFF10B981),
+                                    Color(0xFF047857),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(32),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.35),
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(
+                                      0xFF10B981,
+                                    ).withValues(alpha: 0.45),
+                                    blurRadius: 24,
+                                    spreadRadius: 2,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.35),
+                                    blurRadius: 14,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: _finishScanning,
+                                  borderRadius: BorderRadius.circular(32),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.2,
+                                            ),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.check_rounded,
+                                            color: Colors.white,
+                                            size: 24,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        const Expanded(
+                                          child: Text(
+                                            'Hoàn tất quét',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w700,
+                                              letterSpacing: 0.4,
+                                            ),
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14,
+                                            vertical: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.22,
+                                            ),
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                            border: Border.all(
+                                              color: Colors.white.withValues(
+                                                alpha: 0.3,
+                                              ),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                '${_controller.scannedBarcodes.values.fold(0, (a, b) => a + b.count)} SP',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 0.2,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              const Icon(
+                                                Icons.arrow_forward_rounded,
+                                                color: Colors.white,
+                                                size: 18,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ))
+                    : null;
+
+                // Calculate highest scan window top (when scan window ratio is at max 0.9)
+                // so that ScannerControlsRow never overlaps the scan frame even at maximum zoom/expansion!
+                const double maxRatio = 0.9;
+                final maxScanWindowWidth = size.width * maxRatio;
+                final double maxRatioHeightMultiplier = widget.isQRMode
+                    ? 1.0
+                    : (0.15 + 0.35 * ((maxRatio - 0.2) / 0.7));
+                final maxScanWindowHeight =
+                    maxScanWindowWidth * maxRatioHeightMultiplier;
+                final highestScanWindowTop =
+                    (size.height / 2 - 60) - (maxScanWindowHeight / 2);
+
+                final double defaultScanWindowWidth = size.width * 0.8;
+
+                final double fixedControlsTop =
+                    math.max(68.0, highestScanWindowTop - 52.0);
+                final double fixedRightMargin =
+                    (size.width - defaultScanWindowWidth) / 2;
+
                 return Stack(
                   children: [
                     AnimatedBuilder(
@@ -561,98 +739,31 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                       onZoomChangeEnd: (val) {
                         _scannerKey.currentState?.refocus();
                       },
-                      finishWidget:
-                          (_controller.isMultiScan &&
-                              _controller.scannedBarcodes.isNotEmpty)
-                          ? (widget.multiScanFinishButtonBuilder != null
-                                ? widget.multiScanFinishButtonBuilder!(
-                                    context,
-                                    _controller.scannedBarcodes.map(
-                                      (k, v) => MapEntry(k, v.count),
-                                    ),
-                                    () {
-                                      if (ModalRoute.of(context)?.isCurrent ==
-                                          true) {
-                                        Navigator.of(context).pop(
-                                          SmartScannerResult.multi(
-                                            _controller.scannedBarcodes.map(
-                                              (k, v) => MapEntry(k, v.count),
-                                            ),
-                                          ),
-                                        );
-                                      }
-                                    },
-                                  )
-                                : Container(
-                                    height: 38,
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [
-                                          Color(0xFF10B981),
-                                          Color(0xFF059669),
-                                        ],
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                      ),
-                                      borderRadius: BorderRadius.circular(20),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: const Color(
-                                            0xFF10B981,
-                                          ).withValues(alpha: 0.4),
-                                          blurRadius: 10,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: InkWell(
-                                        onTap: () {
-                                          if (ModalRoute.of(
-                                                context,
-                                              )?.isCurrent ==
-                                              true) {
-                                            Navigator.of(context).pop(
-                                              SmartScannerResult.multi(
-                                                _controller.scannedBarcodes.map(
-                                                  (k, v) =>
-                                                      MapEntry(k, v.count),
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        borderRadius: BorderRadius.circular(20),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: const [
-                                              Icon(
-                                                Icons.check_circle_outline,
-                                                color: Colors.white,
-                                                size: 18,
-                                              ),
-                                              SizedBox(width: 6),
-                                              Text(
-                                                'Hoàn tất',
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w700,
-                                                  letterSpacing: 0.5,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ))
-                          : null,
+                    ),
+
+                    Positioned(
+                      top: fixedControlsTop,
+                      left: 0,
+                      right: 0,
+                      child: ScannerControlsRow(
+                        currentZoom: _controller.currentZoom,
+                        rightPadding: fixedRightMargin,
+                        onZoomChanged: (val) {
+                          _controller.setZoom(val);
+                          _scannerKey.currentState?.setZoom(val);
+                        },
+                        onZoomChangeEnd: (val) {
+                          _scannerKey.currentState?.refocus();
+                        },
+                        showMultiScanToggle: widget.showMultiScanToggle,
+                        isMultiScan: _controller.isMultiScan,
+                        onMultiScanChanged: (value) {
+                          _controller.setMultiScan(value);
+                          if (value) {
+                            HapticFeedback.lightImpact();
+                          }
+                        },
+                      ),
                     ),
 
                     Positioned(
@@ -665,25 +776,6 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              ScannerControlsRow(
-                                currentZoom: _controller.currentZoom,
-                                onZoomChanged: (val) {
-                                  _controller.setZoom(val);
-                                  _scannerKey.currentState?.setZoom(val);
-                                },
-                                onZoomChangeEnd: (val) {
-                                  _scannerKey.currentState?.refocus();
-                                },
-                                showMultiScanToggle: widget.showMultiScanToggle,
-                                isMultiScan: _controller.isMultiScan,
-                                onMultiScanChanged: (value) {
-                                  _controller.setMultiScan(value);
-                                  if (value) {
-                                    HapticFeedback.lightImpact();
-                                  }
-                                },
-                              ),
-                              const SizedBox(height: 16),
                               ScannerBottomSheet(
                                 isMultiScan: _controller.isMultiScan,
                                 isQRMode: widget.isQRMode,
@@ -697,11 +789,57 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                                 multiScanSummaryBuilder:
                                     widget.multiScanSummaryBuilder,
                               ),
+                              AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 200),
+                                reverseDuration: const Duration(milliseconds: 150),
+                                switchInCurve: Curves.easeOutCubic,
+                                switchOutCurve: Curves.easeInCubic,
+                                transitionBuilder: (child, animation) {
+                                  final slideAnimation = Tween<Offset>(
+                                    begin: const Offset(0, 0.3),
+                                    end: Offset.zero,
+                                  ).animate(animation);
+
+                                  return SlideTransition(
+                                    position: slideAnimation,
+                                    child: ScaleTransition(
+                                      scale: animation,
+                                      child: FadeTransition(
+                                        opacity: animation,
+                                        child: child,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: finishButtonWidget != null
+                                    ? Padding(
+                                        key: const ValueKey('finish_button_visible'),
+                                        padding: const EdgeInsets.only(top: 14),
+                                        child: finishButtonWidget,
+                                      )
+                                    : const SizedBox.shrink(
+                                        key: ValueKey('finish_button_hidden'),
+                                      ),
+                              ),
                             ],
                           ),
                         ),
                       ),
                     ),
+
+                    if (_isCompleting)
+                      Positioned.fill(
+                        child: _CompletionOverlay(
+                          title: _controller.isMultiScan
+                              ? 'Quét hoàn tất!'
+                              : 'Quét thành công!',
+                          itemCount: _controller.isMultiScan
+                              ? _controller.scannedBarcodes.values
+                                  .fold<int>(0, (a, b) => a + b.count)
+                              : null,
+                          subtitle: _completionSubtitle,
+                        ),
+                      ),
                   ],
                 );
               },
@@ -772,4 +910,142 @@ class _ScanLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ScanLinePainter old) => old.progress != progress;
+}
+
+class _CompletionOverlay extends StatefulWidget {
+  final String? title;
+  final int? itemCount;
+  final String? subtitle;
+  const _CompletionOverlay({this.title, this.itemCount, this.subtitle});
+
+  @override
+  State<_CompletionOverlay> createState() => _CompletionOverlayState();
+}
+
+class _CompletionOverlayState extends State<_CompletionOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animController;
+  late final Animation<double> _scaleAnim;
+  late final Animation<double> _fadeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    )..forward();
+
+    _scaleAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _animController,
+        curve: Curves.elasticOut,
+      ),
+    );
+
+    _fadeAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _animController,
+        curve: const Interval(0.0, 0.4, curve: Curves.easeIn),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animController,
+      builder: (context, child) {
+        return Container(
+          color: Colors.black.withValues(alpha: 0.75 * _fadeAnim.value),
+          child: Center(
+            child: ScaleTransition(
+              scale: _scaleAnim,
+              child: Opacity(
+                opacity: _fadeAnim.value.clamp(0.0, 1.0),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 36,
+                    vertical: 28,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F2937).withValues(alpha: 0.95),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: const Color(0xFF10B981).withValues(alpha: 0.6),
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF10B981).withValues(alpha: 0.5),
+                        blurRadius: 36,
+                        spreadRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF10B981),
+                              Color(0xFF059669),
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF10B981).withValues(alpha: 0.6),
+                              blurRadius: 20,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.check_rounded,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        widget.title ?? 'Quét thành công!',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        widget.subtitle ??
+                            (widget.itemCount != null
+                                ? 'Đã ghi nhận ${widget.itemCount} sản phẩm'
+                                : 'Đã quét mã thành công'),
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.8),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

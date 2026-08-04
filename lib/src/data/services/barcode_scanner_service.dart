@@ -102,14 +102,26 @@ class BarcodeScannerService {
   /// and feeds the adaptive throttle (stay fast while the phone is being
   /// panned around looking for a code, back off once it's been still with
   /// nothing found for a while).
-  ({bool isMoving, bool justSettled}) _checkMotion(Uint8List nv21Bytes, int yPlaneLength) {
+  ({bool isMoving, bool justSettled}) _checkMotion(
+    Uint8List bytes,
+    int width,
+    int height, {
+    int pixelStride = 1,
+    int bytesPerRow = 0,
+  }) {
+    final int effectiveBytesPerRow = bytesPerRow > 0 ? bytesPerRow : width * pixelStride;
+    final int yPlaneLength = width * height;
     final int sampleCount = yPlaneLength ~/ _motionSampleStep;
     if (sampleCount < 2) return (isMoving: true, justSettled: false);
 
     if (_motionSampleBuffer == null || _motionSampleBuffer!.length != sampleCount) {
       _motionSampleBuffer = Uint8List(sampleCount);
       for (int i = 0; i < sampleCount; i++) {
-        _motionSampleBuffer![i] = nv21Bytes[i * _motionSampleStep];
+        final int sampleIdx = i * _motionSampleStep;
+        final int x = sampleIdx % width;
+        final int y = sampleIdx ~/ width;
+        final int byteIdx = y * effectiveBytesPerRow + x * pixelStride;
+        _motionSampleBuffer![i] = bytes[byteIdx];
       }
       _quietFrameStreak = 0;
       _armedForRefocus = true;
@@ -118,8 +130,11 @@ class BarcodeScannerService {
 
     int totalDelta = 0;
     for (int i = 0; i < sampleCount; i++) {
-      final int idx = i * _motionSampleStep;
-      final int current = nv21Bytes[idx];
+      final int sampleIdx = i * _motionSampleStep;
+      final int x = sampleIdx % width;
+      final int y = sampleIdx ~/ width;
+      final int byteIdx = y * effectiveBytesPerRow + x * pixelStride;
+      final int current = bytes[byteIdx];
       totalDelta += (current - _motionSampleBuffer![i]).abs();
       _motionSampleBuffer![i] = current;
     }
@@ -155,7 +170,14 @@ class BarcodeScannerService {
   /// in-focus frames have strong edges (high value); blurry ones are soft
   /// (low value). Stays within each row so the gradient reflects real
   /// neighboring pixels instead of an accidental wrap to the next scanline.
-  bool _estimateIsBlurry(Uint8List nv21Bytes, int width, int height) {
+  bool _estimateIsBlurry(
+    Uint8List bytes,
+    int width,
+    int height, {
+    int pixelStride = 1,
+    int bytesPerRow = 0,
+  }) {
+    final int effectiveBytesPerRow = bytesPerRow > 0 ? bytesPerRow : width * pixelStride;
     final int yPlaneLength = width * height;
     int totalGradient = 0;
     int samples = 0;
@@ -163,7 +185,10 @@ class BarcodeScannerService {
     for (int i = 0; i + _sharpnessGap < yPlaneLength; i += _sharpnessSampleStride) {
       final int col = i % width;
       if (col + _sharpnessGap >= width) continue;
-      totalGradient += (nv21Bytes[i] - nv21Bytes[i + _sharpnessGap]).abs();
+      final int row = i ~/ width;
+      final int idx1 = row * effectiveBytesPerRow + col * pixelStride;
+      final int idx2 = row * effectiveBytesPerRow + (col + _sharpnessGap) * pixelStride;
+      totalGradient += (bytes[idx1] - bytes[idx2]).abs();
       samples++;
     }
 
@@ -185,13 +210,24 @@ class BarcodeScannerService {
   /// be checked independently of the blur/sharpness estimate above — a glared
   /// frame can look perfectly "sharp" by that metric while still failing to
   /// decode.
-  bool _estimateHasGlare(Uint8List nv21Bytes, int yPlaneLength) {
+  bool _estimateHasGlare(
+    Uint8List bytes,
+    int width,
+    int height, {
+    int pixelStride = 1,
+    int bytesPerRow = 0,
+  }) {
+    final int effectiveBytesPerRow = bytesPerRow > 0 ? bytesPerRow : width * pixelStride;
+    final int yPlaneLength = width * height;
     final int sampleCount = yPlaneLength ~/ _glareSampleStep;
     if (sampleCount == 0) return false;
 
     int brightCount = 0;
     for (int i = 0; i < yPlaneLength; i += _glareSampleStep) {
-      if (nv21Bytes[i] >= _glareBrightThreshold) brightCount++;
+      final int x = i % width;
+      final int y = i ~/ width;
+      final int idx = y * effectiveBytesPerRow + x * pixelStride;
+      if (bytes[idx] >= _glareBrightThreshold) brightCount++;
     }
 
     return (brightCount / sampleCount) > _glareAreaRatio;
@@ -397,7 +433,34 @@ class BarcodeScannerService {
     final Uint8List bytes;
     if (Platform.isIOS) {
       // Zero-copy optimization for iOS (BGRA8888)
-      bytes = image.planes.first.bytes;
+      final plane0 = image.planes.first;
+      bytes = plane0.bytes;
+      final int pixelStride = plane0.bytesPerPixel ?? 4;
+      final int bytesPerRow = plane0.bytesPerRow;
+
+      final motion = _checkMotion(
+        bytes,
+        image.width,
+        image.height,
+        pixelStride: pixelStride > 0 ? pixelStride : 4,
+        bytesPerRow: bytesPerRow,
+      );
+      _isMoving = motion.isMoving;
+      _justSettled = motion.justSettled;
+      _isBlurry = _estimateIsBlurry(
+        bytes,
+        image.width,
+        image.height,
+        pixelStride: pixelStride > 0 ? pixelStride : 4,
+        bytesPerRow: bytesPerRow,
+      );
+      _hasGlare = _estimateHasGlare(
+        bytes,
+        image.width,
+        image.height,
+        pixelStride: pixelStride > 0 ? pixelStride : 4,
+        bytesPerRow: bytesPerRow,
+      );
     } else {
       // Android Zero-Allocation Optimization:
       // Reuse _reusableBuffer to prevent Garbage Collection (GC) churn and device lag.
@@ -426,11 +489,11 @@ class BarcodeScannerService {
       // Check motion, sharpness and glare on the raw luma before
       // contrast-stretching it, since the stretch factor varies frame to
       // frame and would add noise to all three.
-      final motion = _checkMotion(nv21Bytes, width * height);
+      final motion = _checkMotion(nv21Bytes, width, height);
       _isMoving = motion.isMoving;
       _justSettled = motion.justSettled;
       _isBlurry = _estimateIsBlurry(nv21Bytes, width, height);
-      _hasGlare = _estimateHasGlare(nv21Bytes, width * height);
+      _hasGlare = _estimateHasGlare(nv21Bytes, width, height);
 
       _applyAdaptiveContrastStretch(nv21Bytes, width * height);
 
@@ -536,9 +599,7 @@ class BarcodeScannerService {
     );
   }
 
-  /// Process the image and return the recognized barcodes, plus motion state
-  /// (Android only; both flags default to "active" on iOS's zero-copy path
-  /// since it skips the Y-plane sampling below):
+  /// Process the image and return the recognized barcodes, plus motion state:
   /// - [justSettled] is true exactly once, when the camera just stopped
   ///   moving after being panned around.
   /// - [isMoving] reflects the current frame, for callers that want to slow

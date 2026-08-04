@@ -20,8 +20,6 @@ class CameraService {
   double minZoomLevel = 1.0;
   double maxZoomLevel = 1.0;
 
-  // Throttle variable for zoom
-  int _lastZoomTime = 0;
   Timer? _zoomTimer;
   double _baseScale = 1.0;
 
@@ -293,24 +291,34 @@ class CameraService {
     }
   }
 
+  bool _isSettingZoom = false;
+  double _lastAppliedZoom = 1.0;
+
   void handleScaleStart(double currentZoomLevel) {
     _baseScale = currentZoomLevel;
+    _lastAppliedZoom = currentZoomLevel;
   }
 
-  void handleScaleUpdate(double scale, void Function(double) onZoomChanged) {
-    if (_controller == null || _cameras.isEmpty) return;
-
-    // Throttle zoom events
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (now - _lastZoomTime < 50) return;
-    _lastZoomTime = now;
+  void handleScaleUpdate(double scale, void Function(double) onZoomChanged) async {
+    final controller = _controller;
+    if (controller == null || _cameras.isEmpty || _isSettingZoom) return;
 
     double zoomLevel = _baseScale * scale;
     if (zoomLevel < minZoomLevel) zoomLevel = minZoomLevel;
     if (zoomLevel > maxZoomLevel) zoomLevel = maxZoomLevel;
 
-    _controller!.setZoomLevel(zoomLevel);
-    onZoomChanged(zoomLevel);
+    if ((_lastAppliedZoom - zoomLevel).abs() < 0.02) return;
+
+    _isSettingZoom = true;
+    _lastAppliedZoom = zoomLevel;
+
+    try {
+      await controller.setZoomLevel(zoomLevel);
+      onZoomChanged(zoomLevel);
+    } catch (_) {
+    } finally {
+      _isSettingZoom = false;
+    }
   }
 
   Future<void> setZoomLevel(double zoomLevel, [void Function(double)? onZoomChanged]) async {

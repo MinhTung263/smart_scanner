@@ -63,10 +63,6 @@ class ScannerTopBar extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (finishWidget != null) ...[
-                      finishWidget!,
-                      const SizedBox(width: 12),
-                    ],
                     if (onToggleFlash != null) ...[
                       GlassContainer(
                         padding: EdgeInsets.zero,
@@ -205,6 +201,7 @@ class ScannerControlsRow extends StatelessWidget {
   final bool isMultiScan;
   final ValueChanged<bool> onMultiScanChanged;
   final bool showMultiScanToggle;
+  final double? rightPadding;
 
   const ScannerControlsRow({
     super.key,
@@ -214,6 +211,7 @@ class ScannerControlsRow extends StatelessWidget {
     required this.isMultiScan,
     required this.onMultiScanChanged,
     this.showMultiScanToggle = true,
+    this.rightPadding,
   });
 
   @override
@@ -221,10 +219,9 @@ class ScannerControlsRow extends StatelessWidget {
     if (!showMultiScanToggle) return const SizedBox.shrink();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
+      padding: EdgeInsets.only(right: rightPadding ?? 16.0, left: 16.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
           GlassContainer(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
