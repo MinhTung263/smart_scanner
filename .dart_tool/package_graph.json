@@ -5,7 +5,7 @@
   "packages": [
     {
       "name": "smart_scanner",
-      "version": "0.0.2",
+      "version": "0.0.3",
       "dependencies": [
         "camera",
         "flutter",
@@ -70,7 +70,7 @@
     },
     {
       "name": "google_mlkit_barcode_scanning",
-      "version": "0.14.2",
+      "version": "0.15.0",
       "dependencies": [
         "flutter",
         "google_mlkit_commons"
@@ -165,7 +165,7 @@
     },
     {
       "name": "matcher",
-      "version": "0.12.18",
+      "version": "0.12.19",
       "dependencies": [
         "async",
         "meta",
@@ -176,7 +176,7 @@
     },
     {
       "name": "test_api",
-      "version": "0.7.9",
+      "version": "0.7.10",
       "dependencies": [
         "async",
         "boolean_selector",
@@ -273,7 +273,7 @@
     },
     {
       "name": "google_mlkit_commons",
-      "version": "0.11.1",
+      "version": "0.12.0",
       "dependencies": [
         "flutter"
       ]
