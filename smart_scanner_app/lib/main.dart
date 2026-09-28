@@ -164,6 +164,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 32),
                   const Text(
+                    'Cài đặt',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF1F2937),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildVibrationSetting(),
+                  const SizedBox(height: 32),
+                  const Text(
                     'Dữ liệu gần nhất',
                     style: TextStyle(
                       fontSize: 18,
@@ -179,6 +190,60 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVibrationSetting() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFF3F4F6)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF4F46E5).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: SmartScannerSettings.vibrateOnScan,
+              builder: (context, vibrate, _) => Icon(
+                vibrate ? Icons.vibration : Icons.mobile_off,
+                color: const Color(0xFF4F46E5),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Rung khi quét',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                    color: Color(0xFF1F2937),
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Rung mỗi khi quét được mã',
+                  style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          // Saved app-wide by the package, so every scanner follows it.
+          const SmartScannerVibrationSwitch(
+            activeTrackColor: Color(0xFF4F46E5),
           ),
         ],
       ),

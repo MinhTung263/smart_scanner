@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class CameraService {
   // Global lock to prevent overlapping camera lifecycles on rapid screen transitions
@@ -13,6 +14,7 @@ class CameraService {
 
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;
+  Future<void>? _stopFuture;
 
   List<CameraDescription> _cameras = [];
   int _cameraIndex = -1;
@@ -22,6 +24,13 @@ class CameraService {
 
   Timer? _zoomTimer;
   double _baseScale = 1.0;
+
+  /// Whether the last [initializeCamera] failed because camera access is
+  /// denied or restricted. The OS won't prompt again in that case (iOS never
+  /// re-prompts; Android 11+ stops after the user declines twice), so the only
+  /// way forward is for the user to enable it in the system Settings app.
+  bool get isPermissionDenied => _isPermissionDenied;
+  bool _isPermissionDenied = false;
 
   CameraController? get controller => _controller;
   bool get isInitialized =>
@@ -48,6 +57,7 @@ class CameraService {
     void Function(double zoom)? onZoomInitialized,
   }) async {
     final sw = Stopwatch()..start();
+    _isPermissionDenied = false;
 
     // Wait for any previous camera instance to finish disposing before starting a new one
     if (_globalDisposeFuture != null) {
@@ -106,11 +116,16 @@ class CameraService {
 
     final controller = CameraController(
       camera,
-      // 1080p: repeated real-world testing showed small/dense barcodes
-      // (product tags, IMEI labels) failing to decode at 720p — the extra
-      // pixels matter more than the small camera-init time difference.
+      // Keep the existing ~720p preset for small labels. Bound capture FPS
+      // separately from the lower decoder rate to reduce camera/ISP load.
       ResolutionPreset.high,
       enableAudio: false,
+      // camera_avfoundation copies every captured frame (~3.7 MB of BGRA at
+      // 720p) over to Dart regardless of how many we actually decode, so the
+      // capture rate itself is a steady CPU/heat cost on iOS. Android stays at
+      // 30: CameraX applies this as a fixed [fps, fps] range, and a fixed 24
+      // range isn't guaranteed to be supported on every device.
+      fps: Platform.isIOS ? 24 : 30,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21
           : ImageFormatGroup.bgra8888, // MUST be bgra8888 on iOS for ML Kit
@@ -139,16 +154,19 @@ class CameraService {
         return null;
       }
 
+      await _lockPortraitCapture(controller);
       await _ensureContinuousAutofocus(controller);
       await _applyDefaultZoom(controller, onZoomInitialized);
 
+      if (isDisposedCheck() || _controller != controller) return null;
       await controller.startImageStream(onImageStream);
       onUpdateUI();
     } on CameraException catch (e) {
-
       // Fallback if NV21 is not supported on this Android device
       if (Platform.isAndroid && e.code == 'UnsupportedImageFormat') {
-        // Try falling back to default YUV420
+        // Release the failed camera before opening the YUV fallback.
+        await stopLiveFeed();
+        if (isDisposedCheck()) return null;
         return await _startLiveFeedFallbackYuv(
           onImageStream,
           isDisposedCheck,
@@ -158,12 +176,21 @@ class CameraService {
       }
 
       switch (e.code) {
+        // iOS: CameraAccessDenied when the user just declined the prompt,
+        // CameraAccessDeniedWithoutPrompt on every later attempt. Android
+        // reports CameraAccessDenied for both.
         case 'CameraAccessDenied':
-          errorMsg = 'Bạn cần cấp quyền sử dụng Camera trong Cài đặt';
-          break;
         case 'CameraAccessDeniedWithoutPrompt':
+          _isPermissionDenied = true;
           errorMsg =
-              'Quyền Camera bị từ chối vĩnh viễn, vui lòng mở Cài đặt để cấp lại';
+              'Ứng dụng chưa được cấp quyền sử dụng Camera. Hãy mở Cài đặt, '
+              'bật quyền Camera rồi quay lại để quét mã.';
+          break;
+        case 'CameraAccessRestricted':
+          _isPermissionDenied = true;
+          errorMsg =
+              'Quyền Camera đang bị giới hạn trên thiết bị này (ví dụ bởi '
+              'Thời gian sử dụng). Hãy kiểm tra lại trong Cài đặt.';
           break;
         default:
           errorMsg = 'Lỗi camera: ${e.description ?? e.code}';
@@ -192,9 +219,12 @@ class CameraService {
 
     final controller = CameraController(
       camera,
-      ResolutionPreset.high, // 720p: Optimal balance of sharpness and thermal efficiency
+      ResolutionPreset
+          .high, // 720p: Optimal balance of sharpness and thermal efficiency
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420, // Must be yuv420 as this is the fallback
+      fps: 30,
+      imageFormatGroup:
+          ImageFormatGroup.yuv420, // Must be yuv420 as this is the fallback
     );
     _controller = controller;
 
@@ -210,9 +240,11 @@ class CameraService {
 
       if (isDisposedCheck() || _controller != controller) return null;
 
+      await _lockPortraitCapture(controller);
       await _ensureContinuousAutofocus(controller);
       await _applyDefaultZoom(controller, onZoomInitialized);
 
+      if (isDisposedCheck() || _controller != controller) return null;
       await controller.startImageStream(onImageStream);
       onUpdateUI();
     } catch (e) {
@@ -231,8 +263,17 @@ class CameraService {
     try {
       await controller.setZoomLevel(zoom);
       onZoomInitialized?.call(zoom);
-    } catch (e) {
-    }
+    } catch (e) {}
+  }
+
+  /// Pins capture to portrait to match the portrait-only scanner UI. Without
+  /// this, CameraPreview on Android rotates the feed by the *physical* device
+  /// orientation, so tilting the phone turns the preview sideways even though
+  /// the screen itself stays locked.
+  Future<void> _lockPortraitCapture(CameraController controller) async {
+    try {
+      await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
+    } catch (e) {}
   }
 
   /// Explicitly requests continuous autofocus rather than trusting whatever
@@ -242,13 +283,35 @@ class CameraService {
   Future<void> _ensureContinuousAutofocus(CameraController controller) async {
     try {
       await controller.setFocusMode(FocusMode.auto);
-    } catch (e) {
-    }
+    } catch (e) {}
   }
 
   Future<void> stopLiveFeed({
     bool isDisposing = false,
     Future<void> Function()? onScannerClose,
+    VoidCallback? onUpdateUI,
+  }) async {
+    final stopping = _stopFuture;
+    if (stopping != null) {
+      await stopping;
+      if (onScannerClose != null) await onScannerClose();
+      return;
+    }
+    final future = _stopLiveFeed(
+      isDisposing: isDisposing,
+      onUpdateUI: onUpdateUI,
+    );
+    _stopFuture = future;
+    try {
+      await future;
+    } finally {
+      _stopFuture = null;
+      if (onScannerClose != null) await onScannerClose();
+    }
+  }
+
+  Future<void> _stopLiveFeed({
+    required bool isDisposing,
     VoidCallback? onUpdateUI,
   }) async {
     final cameraController = _controller;
@@ -257,6 +320,9 @@ class CameraService {
     _controller = null;
     _initializeControllerFuture = null;
 
+    _isTorchOn = false;
+    final previousDispose = _globalDisposeFuture;
+
     // Create a completer for the global lock
     final completer = Completer<void>();
     _globalDisposeFuture = completer.future;
@@ -264,17 +330,24 @@ class CameraService {
     if (!isDisposing && onUpdateUI != null) onUpdateUI();
 
     try {
+      await previousDispose;
       // Must wait for initialization to complete before disposing to prevent native camera freezes
       if (initFuture != null) {
         // Do NOT use timeout here. We MUST wait for initialize to finish completely.
         // Calling dispose() while initialize() is still running natively will permanently freeze Android cameras.
-        await initFuture;
+        try {
+          await initFuture;
+        } catch (_) {
+          // Failed initialization still owns native resources that need disposal.
+        }
       }
 
       if (cameraController != null &&
           cameraController.value.isStreamingImages) {
         // Do NOT use timeout. Bypassing this will cause native crash.
-        await cameraController.stopImageStream();
+        try {
+          await cameraController.stopImageStream();
+        } catch (_) {}
       }
       if (cameraController != null) {
         // Do NOT use timeout. Bypassing this will cause native crash.
@@ -282,12 +355,14 @@ class CameraService {
       }
     } catch (e) {
     } finally {
-      if (onScannerClose != null) {
-        try {
-          await onScannerClose().timeout(const Duration(milliseconds: 1000));
-        } catch (_) {}
-      }
       if (!completer.isCompleted) completer.complete();
+      // Nothing left to wait for once the latest disposal is done. Clearing
+      // the static lock also stops it leaking a completed future — bound to
+      // whatever zone created it — into later camera sessions (in widget
+      // tests, a previous test's FakeAsync zone, which never runs again).
+      if (identical(_globalDisposeFuture, completer.future)) {
+        _globalDisposeFuture = null;
+      }
     }
   }
 
@@ -299,7 +374,10 @@ class CameraService {
     _lastAppliedZoom = currentZoomLevel;
   }
 
-  void handleScaleUpdate(double scale, void Function(double) onZoomChanged) async {
+  void handleScaleUpdate(
+    double scale,
+    void Function(double) onZoomChanged,
+  ) async {
     final controller = _controller;
     if (controller == null || _cameras.isEmpty || _isSettingZoom) return;
 
@@ -321,7 +399,10 @@ class CameraService {
     }
   }
 
-  Future<void> setZoomLevel(double zoomLevel, [void Function(double)? onZoomChanged]) async {
+  Future<void> setZoomLevel(
+    double zoomLevel, [
+    void Function(double)? onZoomChanged,
+  ]) async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     try {
@@ -354,14 +435,21 @@ class CameraService {
       return;
     }
     final double dx = (scanWindow.center.dx / screenSize.width).clamp(0.0, 1.0);
-    final double dy = (scanWindow.center.dy / screenSize.height).clamp(0.0, 1.0);
+    final double dy = (scanWindow.center.dy / screenSize.height).clamp(
+      0.0,
+      1.0,
+    );
     await focusOnPoint(Offset(dx, dy));
   }
 
+  bool _isFocusing = false;
+
   Future<void> focusOnPoint(Offset? normalizedOffset) async {
     final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
+    if (controller == null || !controller.value.isInitialized || _isFocusing)
+      return;
 
+    _isFocusing = true;
     try {
       if (normalizedOffset != null) {
         // Clear first so a repeat request at the same point (e.g. the
@@ -375,7 +463,9 @@ class CameraService {
         await controller.setFocusPoint(null);
         await controller.setExposurePoint(null);
       }
-    } catch (e) {
+    } catch (_) {
+    } finally {
+      _isFocusing = false;
     }
   }
 
@@ -393,7 +483,9 @@ class CameraService {
 
     try {
       _isTorchOn = !_isTorchOn;
-      await controller.setFlashMode(_isTorchOn ? FlashMode.torch : FlashMode.off);
+      await controller.setFlashMode(
+        _isTorchOn ? FlashMode.torch : FlashMode.off,
+      );
     } catch (_) {
       _isTorchOn = false;
     }

@@ -16,11 +16,15 @@ dependencies:
   google_mlkit_barcode_scanning: ^0.15.0
   image_picker: ^1.2.3
   flutter_zxing: ^2.3.0
+  app_settings: ^7.0.0
+  vibration: ^3.2.1
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  shared_preferences_platform_interface: ^2.4.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

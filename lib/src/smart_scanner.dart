@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'data/services/camera_service.dart';
 import 'presentation/pages/smart_scanner_page.dart';
 import 'domain/entities/smart_scanner_result.dart';
+import 'smart_scanner_settings.dart';
 
 export 'domain/entities/smart_scanner_result.dart';
 
@@ -20,7 +21,10 @@ class SmartScanner {
   /// of blocking the scanner screen on open. Safe to call multiple times —
   /// later calls are instant no-ops once the camera list is cached.
   static Future<void> warmUp() async {
-    await CameraService.preloadCameras();
+    await Future.wait([
+      CameraService.preloadCameras(),
+      SmartScannerSettings.load(),
+    ]);
   }
 
   /// Opens the smart scanner screen and returns the scanned result(s).
@@ -28,12 +32,17 @@ class SmartScanner {
   /// If [isQRMode] is true, the scanner will only look for QR codes.
   /// Otherwise, it will look for traditional 1D barcodes.
   ///
+  /// Vibration on a successful scan follows the app-wide
+  /// [SmartScannerSettings.vibrateOnScan] (see [SmartScannerVibrationSwitch]);
+  /// pass [enableVibration] to force it on or off for this scan only.
+  ///
   /// - A [SmartScannerResult] if barcodes are scanned.
   /// - `null` if the user cancels or goes back without scanning.
   static Future<SmartScannerResult?> scan(
     BuildContext context, {
     bool isQRMode = false,
     bool showMultiScanToggle = true,
+    bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
     Widget Function(BuildContext context, int totalItems, int totalQuantity)?
@@ -48,12 +57,14 @@ class SmartScanner {
     // Warm up the camera list before the route transition starts so the scanner
     // screen doesn't have to wait on availableCameras() after it's already visible.
     CameraService.preloadCameras();
+    SmartScannerSettings.load();
 
     return Navigator.of(context).push<SmartScannerResult?>(
       MaterialPageRoute(
         builder: (context) => SmartScannerScreen(
           isQRMode: isQRMode,
           showMultiScanToggle: showMultiScanToggle,
+          enableVibration: enableVibration,
           bottomWidgetBuilder:
               bottomWidgetBuilder ??
               (context, barcode) {
@@ -255,11 +266,13 @@ class SmartScanner {
   static Future<SmartScannerResult?> scanQR(
     BuildContext context, {
     bool showMultiScanToggle = true,
+    bool? enableVibration,
   }) {
     return scan(
       context,
       isQRMode: true,
       showMultiScanToggle: showMultiScanToggle,
+      enableVibration: enableVibration,
     );
   }
 
@@ -267,11 +280,13 @@ class SmartScanner {
   static Future<SmartScannerResult?> scanBarcode(
     BuildContext context, {
     bool showMultiScanToggle = true,
+    bool? enableVibration,
   }) {
     return scan(
       context,
       isQRMode: false,
       showMultiScanToggle: showMultiScanToggle,
+      enableVibration: enableVibration,
     );
   }
 
@@ -281,6 +296,7 @@ class SmartScanner {
     BuildContext context, {
     bool isQRMode = false,
     bool showMultiScanToggle = true,
+    bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
     Widget Function(BuildContext context, int totalItems, int totalQuantity)?
@@ -297,6 +313,7 @@ class SmartScanner {
         builder: (context) => SmartScannerScreen(
           isQRMode: isQRMode,
           showMultiScanToggle: showMultiScanToggle,
+          enableVibration: enableVibration,
           bottomWidgetBuilder: bottomWidgetBuilder,
           multiScanItemBuilder: multiScanItemBuilder,
           multiScanSummaryBuilder: multiScanSummaryBuilder,

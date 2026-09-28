@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'package:app_settings/app_settings.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 
 import '../../data/services/barcode_scanner_service.dart';
 import '../../data/services/camera_service.dart';
 import 'barcode_overlay_painter.dart';
+import 'glass_container.dart';
 
 class CustomBarcodeScanner extends StatefulWidget {
   final List<BarcodeFormat> formats;
@@ -60,21 +63,33 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
 
   bool _isDisposed = false;
   bool _isBusy = false;
-  bool _isAutoZooming = false;
-  int _lastProcessTime = 0;
+  bool _isPaused = false;
+  bool _isAppActive = true;
+  int _session = 0;
+  Future<void>? _initializing;
+  final Stopwatch _clock = Stopwatch()..start();
+  int _nextProcessTime = 0;
   double _currentZoom = 1.0;
   String? _cameraError;
+  // Permission errors can't be fixed by retrying in-app — the error view
+  // offers a shortcut to Settings instead. Coming back from Settings resumes
+  // the app, which retries the camera via didChangeAppLifecycleState.
+  bool _cameraErrorIsPermission = false;
+  // Set once the app is actually backgrounded (hidden/paused), as opposed to
+  // just inactive — which is all a system permission prompt causes.
+  bool _wasInBackground = false;
   List<Barcode> _recognizedBarcodes = [];
   late final int _detectionReadyAtMs;
 
-  // Adaptive frame-rate throttle: run at full speed while the phone is being
-  // moved around or something's actually in frame, but back off once it's
-  // been idle for a while to cut sustained CPU load (and heat) during long
-  // scanning sessions. Speeds back up the instant motion resumes or a code
-  // appears, so it never trades away responsiveness while actually scanning.
-  static const int _activeThrottleMs = 20; // ~50 FPS cap
-  static const int _idleThrottleMs = 250; // ~4 FPS cap
-  static const int _idleGraceMs = 1500; // how long without activity before backing off
+  // Preview remains fluid; decoding needs a much smaller frame budget.
+  // Slow devices also get a rest period proportional to the last decode time.
+  // Each decode is a full-frame ML Kit pass plus a frame copy to native, so
+  // this rate is the main CPU/heat knob. At 5/sec a code held in frame is
+  // still picked up within ~200ms.
+  static const int _activeThrottleMs = 200; // at most 5 decodes/sec
+  static const int _idleThrottleMs = 500;
+  static const int _idleGraceMs =
+      1500; // how long without activity before backing off
   static const int _autoPauseTimeoutMs = 60000; // Auto-pause after 60s idle
   late int _lastActivityAtMs;
   late int _lastUserActivityMs;
@@ -128,13 +143,16 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     final bool sustained = (isBlurry || hasGlare) && !isMoving && !hasBarcode;
     if (!sustained) {
       _scanTroubleSinceMs = null;
-      if (_showBackAwayHint && mounted) setState(() => _showBackAwayHint = false);
+      if (_showBackAwayHint && mounted)
+        setState(() => _showBackAwayHint = false);
       return;
     }
 
     _scanTroubleSinceMs ??= now;
-    final bool shouldShow = (now - _scanTroubleSinceMs!) > _scanTroubleHintDelayMs;
-    if ((shouldShow != _showBackAwayHint || hasGlare != _scanTroubleIsGlare) && mounted) {
+    final bool shouldShow =
+        (now - _scanTroubleSinceMs!) > _scanTroubleHintDelayMs;
+    if ((shouldShow != _showBackAwayHint || hasGlare != _scanTroubleIsGlare) &&
+        mounted) {
       setState(() {
         _showBackAwayHint = shouldShow;
         _scanTroubleIsGlare = hasGlare;
@@ -143,7 +161,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   }
 
   void _handleCameraUpdateUI() {
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
     _cameraAlive.value = _cameraService.isInitialized;
     setState(() {});
   }
@@ -152,13 +170,12 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _lastActivityAtMs = DateTime.now().millisecondsSinceEpoch;
-    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+    _lastActivityAtMs = _clock.elapsedMilliseconds;
+    _lastUserActivityMs = _clock.elapsedMilliseconds;
     _startInactivityChecker();
 
-    _detectionReadyAtMs = DateTime.now()
-        .add(widget.detectionWarmupDelay)
-        .millisecondsSinceEpoch;
+    _detectionReadyAtMs =
+        _clock.elapsedMilliseconds + widget.detectionWarmupDelay.inMilliseconds;
 
     _cameraService = CameraService();
     _barcodeScannerService = BarcodeScannerService(formats: widget.formats);
@@ -166,7 +183,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
-    )..repeat(reverse: true);
+    );
 
     _lockController = AnimationController(
       vsync: this,
@@ -182,39 +199,68 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     });
   }
 
+  bool get _canScan =>
+      mounted && !_isDisposed && !_isPaused && !_isAutoPaused && _isAppActive;
+
   Future<void> _initializeCamera() async {
+    if (!_canScan) return;
+    if (_initializing != null) {
+      await _initializing;
+      // Don't chain another attempt onto one that just failed — after a
+      // permission denial that would make Android show the dialog again.
+      if (_canScan && !_cameraService.isInitialized && _cameraError == null) {
+        await _initializeCamera();
+      }
+      return;
+    }
+    if (_cameraService.isInitialized) return;
+    final future = _startCamera();
+    _initializing = future;
+    try {
+      await future;
+    } finally {
+      _initializing = null;
+    }
+  }
+
+  Future<void> _startCamera() async {
     final errorMsg = await _cameraService.initializeCamera(
       onImageStream: _processCameraImage,
-      isDisposedCheck: () => _isDisposed,
+      isDisposedCheck: () => !_canScan,
       onUpdateUI: _handleCameraUpdateUI,
       onZoomInitialized: _handleZoomInitialized,
     );
-
-    if (errorMsg != null && mounted) {
+    if (!mounted || _isDisposed) return;
+    final permissionDenied =
+        errorMsg != null && _cameraService.isPermissionDenied;
+    // The permission prompt itself makes the app inactive, so a denial
+    // usually arrives while !_canScan. Record it anyway: the resume that
+    // follows has to see it, or it would start another attempt and re-prompt.
+    if (!_canScan && !permissionDenied) return;
+    if (errorMsg != null) {
+      await _cameraService.stopLiveFeed();
+      if (!mounted || _isDisposed) return;
+      if (!_canScan && !permissionDenied) return;
       setState(() {
         _cameraError = errorMsg;
+        _cameraErrorIsPermission = permissionDenied;
       });
-    } else if (mounted && !_isDisposed) {
-      // Prioritize sharpness on the scan window from the very first frame,
-      // instead of whatever whole-frame point the camera defaults to.
+    } else {
       _refocusOnScanWindow();
       _startPeriodicRefocus();
     }
   }
 
-  /// Nudges autofocus every ~900ms while still searching for a code, instead
-  /// of relying solely on the motion-just-settled trigger. That trigger can
-  /// fail to fire at close range: the same small hand tremor produces a much
-  /// bigger apparent frame-to-frame change when the subject fills more of the
-  /// frame, so the motion detector may never register "settled" — leaving the
-  /// lens stuck at whatever distance it last focused on and the image blurry
-  /// once the phone is moved in close.
+  // Continuous autofocus handles normal scanning. Retry only when our quality
+  // hint indicates persistent trouble, rather than forcing focus every 3s.
   void _startPeriodicRefocus() {
     _periodicRefocusTimer?.cancel();
-    _periodicRefocusTimer = Timer.periodic(const Duration(milliseconds: 3000), (_) {
-      if (!mounted || _isDisposed || _isAutoPaused) return;
+    _periodicRefocusTimer = Timer.periodic(const Duration(milliseconds: 3000), (
+      _,
+    ) {
+      if (!_canScan) return;
       // Leave a working focus alone once a code is actually in frame.
-      if (_recognizedBarcodes.isEmpty) {
+      if (_recognizedBarcodes.isEmpty && _showBackAwayHint) {
         _refocusOnScanWindow();
       }
     });
@@ -228,8 +274,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   void _startInactivityChecker() {
     _inactivityCheckTimer?.cancel();
     _inactivityCheckTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (!mounted || _isDisposed || _isAutoPaused) return;
-      final int now = DateTime.now().millisecondsSinceEpoch;
+      if (!_canScan) return;
+      final int now = _clock.elapsedMilliseconds;
       if (now - _lastUserActivityMs > _autoPauseTimeoutMs) {
         _triggerAutoPause();
       }
@@ -238,6 +284,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
 
   void _triggerAutoPause() {
     if (_isAutoPaused || !mounted || _isDisposed) return;
+    _session++;
     _stopPeriodicRefocus();
     _pulseController.stop();
     _lockController.stop();
@@ -253,15 +300,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     setState(() {
       _isAutoPaused = false;
     });
-    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
-    _lastActivityAtMs = DateTime.now().millisecondsSinceEpoch;
-    if (!_pulseController.isAnimating) {
-      _pulseController.repeat(reverse: true);
-    }
+    _lastUserActivityMs = _clock.elapsedMilliseconds;
+    _lastActivityAtMs = _clock.elapsedMilliseconds;
     await _initializeCamera();
   }
 
   void _handleZoomInitialized(double zoom) {
+    if (!_canScan) return;
     _currentZoom = zoom;
     _cameraService.handleScaleStart(zoom);
     if (widget.onZoomChanged != null) widget.onZoomChanged!(zoom);
@@ -317,165 +362,174 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   @override
   void didUpdateWidget(CustomBarcodeScanner oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.formats != widget.formats) {
+    if (!listEquals(oldWidget.formats, widget.formats)) {
       _barcodeScannerService.updateFormats(widget.formats);
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
-      _stopPeriodicRefocus();
-      _cameraService.stopLiveFeed(
-        onUpdateUI: _handleCameraUpdateUI,
-      );
-    } else if (state == AppLifecycleState.resumed) {
-      if (_cameraError != null || _cameraService.currentCamera == null) {
+    if (_isDisposed) return;
+    if (state == AppLifecycleState.resumed) {
+      _isAppActive = true;
+      final wasInBackground = _wasInBackground;
+      _wasInBackground = false;
+      // Resuming from the permission prompt itself (the app was only
+      // inactive) must not retry: Android would ask again straight away, and
+      // once the user has blocked the permission every attempt flashes an
+      // invisible, auto-denying prompt that resumes the app again — an
+      // endless loop that keeps the scanner stuck on its loading state. Only
+      // retry after a real trip away from the app, e.g. to Settings.
+      if (_cameraError != null && _cameraErrorIsPermission && !wasInBackground) {
+        return;
+      }
+      if (_canScan) {
         setState(() => _cameraError = null);
         _initializeCamera();
-      } else if (!_cameraService.isInitialized) {
-        _cameraService.initializeCamera(
-          onImageStream: _processCameraImage,
-          isDisposedCheck: () => _isDisposed,
-          onUpdateUI: _handleCameraUpdateUI,
-          onZoomInitialized: _handleZoomInitialized,
-        ).then((errorMsg) {
-          if (errorMsg == null && mounted && !_isDisposed) {
-            _refocusOnScanWindow();
-            _startPeriodicRefocus();
-          }
-        });
       }
+    } else {
+      if (state == AppLifecycleState.hidden ||
+          state == AppLifecycleState.paused) {
+        _wasInBackground = true;
+      }
+      _isAppActive = false;
+      _session++;
+      _stopPeriodicRefocus();
+      _pulseController.stop();
+      _cameraAlive.value = false;
+      _cameraService.stopLiveFeed(onUpdateUI: _handleCameraUpdateUI);
     }
   }
 
   void _processCameraImage(CameraImage image) async {
-    if (_isBusy || _isDisposed || _cameraService.currentCamera == null) return;
+    if (_isBusy || !_canScan || _cameraService.currentCamera == null) return;
 
-    final int now = DateTime.now().millisecondsSinceEpoch;
-    // Ultra-Fast when active: 50 FPS cap (20ms). Backs off to ~10 FPS after a
-    // stretch of no motion and nothing in frame, to cut sustained CPU/heat
-    // during long idle waits — see the adaptive-throttle fields above.
+    final int now = _clock.elapsedMilliseconds;
+    if (now < _detectionReadyAtMs || now < _nextProcessTime) return;
     final bool idle = (now - _lastActivityAtMs) > _idleGraceMs;
     final int throttleMs = idle ? _idleThrottleMs : _activeThrottleMs;
-    if (now - _lastProcessTime < throttleMs) return;
-
+    final session = _session;
     _isBusy = true;
-    _lastProcessTime = now;
+    try {
+      final screenSize = MediaQuery.of(context).size;
 
-    final screenSize = MediaQuery.of(context).size;
+      // NOTE: crop-to-scan-window is temporarily disabled (not passing
+      // scanWindow/screenSize here falls back to full-frame decoding) while we
+      // isolate a reported bounding-box distortion — see processCameraImage's
+      // crop path in barcode_scanner_service.dart.
+      final (
+        barcodes,
+        justSettled,
+        isMoving,
+        isBlurry,
+        hasGlare,
+      ) = await _barcodeScannerService.processCameraImage(
+        image,
+        _cameraService.currentCamera!,
+      );
 
-    // NOTE: crop-to-scan-window is temporarily disabled (not passing
-    // scanWindow/screenSize here falls back to full-frame decoding) while we
-    // isolate a reported bounding-box distortion — see processCameraImage's
-    // crop path in barcode_scanner_service.dart.
-    final (barcodes, justSettled, isMoving, isBlurry, hasGlare) =
-        await _barcodeScannerService.processCameraImage(
-      image,
-      _cameraService.currentCamera!,
-    );
+      if (!_canScan || session != _session) return;
 
-    if (isMoving || justSettled || barcodes.isNotEmpty) {
-      _lastActivityAtMs = now;
-      _lastUserActivityMs = now;
-    }
+      if (isMoving || justSettled || barcodes.isNotEmpty) {
+        _lastActivityAtMs = now;
+        _lastUserActivityMs = now;
+      }
 
-    if (justSettled && mounted && !_isDisposed) {
-      // The phone just stopped moving after being panned around looking for
-      // a code; refresh focus on the scan window while it's held steady.
-      _refocusOnScanWindow();
-    }
+      if (justSettled && isBlurry && barcodes.isEmpty) {
+        // The phone just stopped moving after being panned around looking for
+        // a code; refresh focus on the scan window while it's held steady.
+        _refocusOnScanWindow();
+      }
 
-    _updateBackAwayHint(
-      now: now,
-      isBlurry: isBlurry,
-      hasGlare: hasGlare,
-      isMoving: isMoving,
-      hasBarcode: barcodes.isNotEmpty,
-    );
+      _updateBackAwayHint(
+        now: now,
+        isBlurry: isBlurry,
+        hasGlare: hasGlare,
+        isMoving: isMoving,
+        hasBarcode: barcodes.isNotEmpty,
+      );
 
-    if (mounted && !_isDisposed) {
-      if (now >= _detectionReadyAtMs) {
-        final controller = _cameraService.controller;
-        final previewSize = controller?.value.previewSize;
-        final imageSize = Size(image.width.toDouble(), image.height.toDouble());
-
-        if (previewSize != null) {
-          final filteredBarcodes = _barcodeScannerService.filterAndSortBarcodes(
-            barcodes,
-            imageSize,
-            previewSize,
-            screenSize,
-            widget.scanWindow,
+      if (mounted && !_isDisposed) {
+        if (now >= _detectionReadyAtMs) {
+          final controller = _cameraService.controller;
+          final previewSize = controller?.value.previewSize;
+          final imageSize = Size(
+            image.width.toDouble(),
+            image.height.toDouble(),
           );
 
-          if (_recognizedBarcodes.isEmpty && filteredBarcodes.isNotEmpty) {
-            _clearBarcodesTimer?.cancel();
-            _clearBarcodesTimer = null;
-            _lockController.forward(from: 0.0);
-          }
+          if (previewSize != null) {
+            final filteredBarcodes = _barcodeScannerService
+                .filterAndSortBarcodes(
+                  barcodes,
+                  imageSize,
+                  previewSize,
+                  screenSize,
+                  widget.scanWindow,
+                );
 
-          if (filteredBarcodes.isNotEmpty) {
-            _clearBarcodesTimer?.cancel();
-            _clearBarcodesTimer = null;
-            setState(() {
-              _recognizedBarcodes = filteredBarcodes;
-            });
+            if (_recognizedBarcodes.isEmpty && filteredBarcodes.isNotEmpty) {
+              _clearBarcodesTimer?.cancel();
+              _clearBarcodesTimer = null;
+              _lockController.forward(from: 0.0);
+              _pulseController.repeat(reverse: true);
+            }
 
-            final firstBarcode = filteredBarcodes.first;
-            final mappedRect = BarcodeScannerService.mapMlKitRectToScreen(
-              rawRect: firstBarcode.boundingBox,
-              previewSize: previewSize,
-              screenSize: screenSize,
-            );
-            _autoZoomToBarcode(mappedRect, screenSize);
-            widget.onDetect(filteredBarcodes);
-          } else if (_recognizedBarcodes.isNotEmpty) {
-            // Barcodes lost: play reverse exit animation (fade-out & scale-out) smoothly back to hidden state
-            if (_clearBarcodesTimer == null || !_clearBarcodesTimer!.isActive) {
-              _lockController.reverse();
-              _clearBarcodesTimer = Timer(const Duration(milliseconds: 200), () {
-                if (mounted && !_isDisposed) {
-                  setState(() {
-                    _recognizedBarcodes = [];
-                  });
-                }
+            if (filteredBarcodes.isNotEmpty) {
+              _clearBarcodesTimer?.cancel();
+              _clearBarcodesTimer = null;
+              setState(() {
+                _recognizedBarcodes = filteredBarcodes;
               });
+
+              widget.onDetect(filteredBarcodes);
+            } else if (_recognizedBarcodes.isNotEmpty) {
+              // Barcodes lost: play reverse exit animation (fade-out & scale-out) smoothly back to hidden state
+              if (_clearBarcodesTimer == null ||
+                  !_clearBarcodesTimer!.isActive) {
+                _lockController.reverse();
+                _clearBarcodesTimer = Timer(
+                  const Duration(milliseconds: 200),
+                  () {
+                    if (mounted && !_isDisposed) {
+                      _pulseController.stop();
+                      setState(() {
+                        _recognizedBarcodes = [];
+                      });
+                    }
+                  },
+                );
+              }
             }
           }
         }
       }
-    }
-
-    _isBusy = false;
-  }
-
-  Future<void> _autoZoomToBarcode(Rect mappedRect, Size screenSize) async {
-    if (_isAutoZooming || !_cameraService.isInitialized || _cameraService.maxZoomLevel <= 1.0) return;
-
-    final scanWinWidth = widget.scanWindow?.width ?? (screenSize.width * 0.7);
-    final double qrRatio = (mappedRect.width / scanWinWidth).clamp(0.05, 1.0);
-
-    if (qrRatio < 0.5) {
-      final double targetZoom = (_currentZoom * (0.55 / qrRatio)).clamp(
-        _cameraService.minZoomLevel,
-        _cameraService.maxZoomLevel,
+    } catch (error, stack) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stack,
+          library: 'smart_scanner',
+          context: ErrorDescription('while processing a camera frame'),
+        ),
       );
-
-      if ((targetZoom - _currentZoom).abs() > 0.2) {
-        _isAutoZooming = true;
-        _currentZoom = targetZoom;
-        await _cameraService.setZoomLevel(targetZoom, widget.onZoomChanged);
-        await Future.delayed(const Duration(milliseconds: 300));
-        _isAutoZooming = false;
-      }
+    } finally {
+      final finished = _clock.elapsedMilliseconds;
+      final elapsed = finished - now;
+      // Never immediately re-run a slow decoder; allow time for rendering
+      // and cap sustained decoder duty to roughly 50% on slower devices.
+      _nextProcessTime =
+          finished + (elapsed > throttleMs ~/ 2 ? elapsed : throttleMs ~/ 2);
+      if (_nextProcessTime < now + throttleMs)
+        _nextProcessTime = now + throttleMs;
+      _isBusy = false;
     }
   }
 
   void setZoom(double zoomLevel) {
     if (_cameraService.isInitialized) {
-      _cameraService.controller?.setZoomLevel(zoomLevel);
+      _currentZoom = zoomLevel;
+      _cameraService.setZoomLevel(zoomLevel, widget.onZoomChanged);
     }
   }
 
@@ -487,6 +541,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   /// keeps prioritizing sharpness where the barcode actually appears instead
   /// of resetting to a whole-frame default point.
   void _refocusOnScanWindow() {
+    if (!_canScan) return;
     final scanWindow = widget.scanWindow;
     if (scanWindow == null) {
       _cameraService.focusOnScreenPosition(context, null);
@@ -495,15 +550,24 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     _cameraService.focusOnScanWindow(scanWindow, MediaQuery.of(context).size);
   }
 
-  void pauseCamera() {
+  Future<void> pauseCamera() async {
+    if (_isDisposed) return;
+    _isPaused = true;
+    _session++;
     _cameraAlive.value = false;
     _pulseController.stop();
     _lockController.stop();
+    _clearBarcodesTimer?.cancel();
     _stopPeriodicRefocus();
-    final controller = _cameraService.controller;
-    if (controller != null && controller.value.isInitialized && controller.value.isStreamingImages) {
-      controller.stopImageStream().catchError((_) {});
-    }
+    await _cameraService.stopLiveFeed();
+  }
+
+  Future<void> resumeCamera() async {
+    if (_isDisposed || !mounted) return;
+    _isPaused = false;
+    _recognizedBarcodes = [];
+    _lastActivityAtMs = _lastUserActivityMs = _clock.elapsedMilliseconds;
+    await _initializeCamera();
   }
 
   void _handleScaleStart(ScaleStartDetails details) {
@@ -531,36 +595,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   @override
   Widget build(BuildContext context) {
     if (_cameraError != null) {
-      return Container(
-        color: Colors.black,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _cameraError!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 16),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    setState(() => _cameraError = null);
-                    _initializeCamera();
-                  },
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Thử lại'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white24,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+      return _CameraErrorView(
+        message: _cameraError!,
+        isPermissionDenied: _cameraErrorIsPermission,
+        onRetry: () {
+          setState(() => _cameraError = null);
+          _initializeCamera();
+        },
       );
     }
 
@@ -583,21 +624,22 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       fit: StackFit.expand,
       children: [
         AnimatedSwitcher(
+          key: ValueKey(_session),
           duration: const Duration(milliseconds: 400),
           child: (isCameraReady && controller != null)
               ? GestureDetector(
                   key: const ValueKey('camera_preview'),
                   onScaleStart: (details) {
-                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+                    _lastUserActivityMs = _clock.elapsedMilliseconds;
                     _handleScaleStart(details);
                   },
                   onScaleUpdate: (details) {
-                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+                    _lastUserActivityMs = _clock.elapsedMilliseconds;
                     _handleScaleUpdate(details);
                   },
                   onScaleEnd: (details) => _refocusOnScanWindow(),
                   onDoubleTap: () {
-                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+                    _lastUserActivityMs = _clock.elapsedMilliseconds;
                     // Toggle between the default zoom and the max available,
                     // for a quick zoom-in on small barcodes. Anchored to the
                     // camera's own default/max instead of hardcoded values, so
@@ -616,7 +658,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                     }
                   },
                   onTapDown: (details) {
-                    _lastUserActivityMs = DateTime.now().millisecondsSinceEpoch;
+                    _lastUserActivityMs = _clock.elapsedMilliseconds;
                     final scanWindow = widget.scanWindow;
                     if (scanWindow != null) {
                       if (scanWindow.contains(details.localPosition)) {
@@ -637,8 +679,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                         child: ValueListenableBuilder<bool>(
                           valueListenable: _cameraAlive,
                           builder: (context, alive, _) {
-                            if (!alive) return const SizedBox.shrink();
-                            return CameraPreview(controller);
+                            // An outgoing switcher child must never revive its
+                            // old controller when a new camera becomes ready.
+                            if (!alive || !_canScan ||
+                                _cameraService.controller != controller) {
+                              return const SizedBox.shrink();
+                            }
+                            return RepaintBoundary(child: CameraPreview(controller));
                           },
                         ),
                       ),
@@ -749,6 +796,155 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Full-screen state shown when the camera can't be opened. Replaces the whole
+/// scanner (including the host's overlay and its back button), so it carries
+/// its own way out.
+class _CameraErrorView extends StatelessWidget {
+  final String message;
+  final bool isPermissionDenied;
+  final VoidCallback onRetry;
+
+  const _CameraErrorView({
+    required this.message,
+    required this.isPermissionDenied,
+    required this.onRetry,
+  });
+
+  static const _accent = Color(0xFF10B981);
+
+  @override
+  Widget build(BuildContext context) {
+    final bool canPop = Navigator.of(context).canPop();
+
+    // Material (not a plain Container) so the back button's InkWell works even
+    // when the scanner is embedded without a Scaffold above it.
+    return Material(
+      color: Colors.black,
+      child: SafeArea(
+        child: Stack(
+          children: [
+            if (canPop)
+              Positioned(
+                left: 16,
+                top: 8,
+                child: GlassContainer(
+                  padding: EdgeInsets.zero,
+                  borderRadius: 16,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => Navigator.of(context).maybePop(),
+                    child: const Padding(
+                      padding: EdgeInsets.all(10),
+                      child: Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 88,
+                      height: 88,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFF1F2937),
+                        border: Border.all(
+                          color: (isPermissionDenied
+                                  ? _accent
+                                  : Colors.redAccent)
+                              .withValues(alpha: 0.6),
+                          width: 2,
+                        ),
+                      ),
+                      child: Icon(
+                        isPermissionDenied
+                            ? Icons.no_photography_outlined
+                            : Icons.error_outline_rounded,
+                        color: isPermissionDenied ? _accent : Colors.redAccent,
+                        size: 40,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      isPermissionDenied
+                          ? 'Chưa có quyền truy cập Camera'
+                          : 'Không mở được camera',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      message,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.75),
+                        fontSize: 14,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    if (isPermissionDenied) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => AppSettings.openAppSettings(),
+                          icon: const Icon(Icons.settings_rounded),
+                          label: const Text('Mở Cài đặt'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _accent,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: onRetry,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                        ),
+                        child: const Text('Thử lại'),
+                      ),
+                    ] else
+                      ElevatedButton.icon(
+                        onPressed: onRetry,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Thử lại'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white24,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

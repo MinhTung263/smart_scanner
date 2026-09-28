@@ -1,7 +1,12 @@
-import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 
+/// Translucent panel for the controls drawn over the live camera preview.
+///
+/// Deliberately has no BackdropFilter blur: the camera texture changes every
+/// frame, so each blurred panel would re-sample and re-blur the screen behind
+/// it ~30 times a second for as long as the scanner is open — a steady GPU
+/// load that shows up as heat. The semi-opaque fill keeps controls legible
+/// without it (Android already rendered this way).
 class GlassContainer extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -20,7 +25,7 @@ class GlassContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final container = Container(
+    return Container(
       padding: padding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: backgroundColor ?? Colors.black.withValues(alpha: 0.6),
@@ -35,18 +40,6 @@ class GlassContainer extends StatelessWidget {
         ],
       ),
       child: child,
-    );
-
-    if (Platform.isAndroid) {
-      return container;
-    }
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-        child: container,
-      ),
     );
   }
 }

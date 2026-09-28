@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_zxing/flutter_zxing.dart' hide CameraController, ResolutionPreset, CameraLensDirection;
+import 'package:vibration/vibration.dart';
+import 'package:flutter_zxing/flutter_zxing.dart'
+    hide CameraController, ResolutionPreset, CameraLensDirection;
 import '../../domain/entities/smart_scanner_result.dart';
+import '../../smart_scanner_settings.dart';
 
 import '../../controllers/scanner_controller.dart';
 import '../widgets/custom_barcode_scanner.dart';
@@ -12,15 +16,40 @@ import '../widgets/scanner_overlay.dart';
 import '../widgets/scanner_controls.dart';
 import '../widgets/scanner_bottom_sheet.dart';
 
-enum _GalleryStatus {
-  idle,
-  selecting,
-  analyzing,
+// ZXing's file helper decodes pixels and calls FFI synchronously after its
+// file read. Run the complete operation off the UI isolate, including JPEG/HEIC
+// decompression, resizing and conversion to RGB.
+Future<List<String>> _decodeGalleryBarcodes((String, int) request) async {
+  final codes = await zx.readBarcodesImagePathString(
+    request.$1,
+    DecodeParams(
+      format: request.$2,
+      tryHarder: true,
+      tryRotate: true,
+      imageFormat: ImageFormat.rgb,
+      maxSize: 4000,
+    ),
+  );
+  return codes.codes
+      .where((code) => code.isValid)
+      .map((code) => code.text)
+      .whereType<String>()
+      .where((text) => text.isNotEmpty)
+      .toList();
 }
+
+enum _GalleryStatus { idle, selecting, analyzing }
 
 class SmartScannerScreen extends StatefulWidget {
   final bool isQRMode;
   final bool showMultiScanToggle;
+
+  /// Whether the phone vibrates when a code is scanned (single scan, each new
+  /// code in multi-scan, and finishing a multi-scan). `null` follows the
+  /// app-wide [SmartScannerSettings.vibrateOnScan]. Light taps on the
+  /// scanner's own buttons are unaffected; they follow the system's touch
+  /// feedback setting.
+  final bool? enableVibration;
   final Widget Function(BuildContext context, String barcode)?
   bottomWidgetBuilder;
   final Widget Function(BuildContext context, String barcode)?
@@ -42,6 +71,7 @@ class SmartScannerScreen extends StatefulWidget {
     super.key,
     this.isQRMode = false,
     this.showMultiScanToggle = true,
+    this.enableVibration,
     this.bottomWidgetBuilder,
     this.multiScanItemBuilder,
     this.multiScanSummaryBuilder,
@@ -82,6 +112,10 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   @override
   void initState() {
     super.initState();
+    // The camera preview, guide frame and ML Kit rotation handling all assume
+    // portrait, so lock the screen for as long as the scanner is open.
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    SmartScannerSettings.load();
     _controller = ScannerController();
 
     _cornerController = AnimationController(
@@ -92,11 +126,14 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
     _loadingController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
-    )..repeat();
+    );
   }
 
   @override
   void dispose() {
+    // An empty list hands orientation back to the host app's own settings
+    // (Info.plist / AndroidManifest) once the scanner closes.
+    SystemChrome.setPreferredOrientations([]);
     _cornerController.dispose();
     _loadingController.dispose();
     _controller.dispose();
@@ -108,9 +145,8 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
   void _finishSingleScan(String barcode) {
     if (_isCompleting) return;
-    try {
-      HapticFeedback.heavyImpact();
-    } catch (_) {}
+    _scannerKey.currentState?.pauseCamera();
+    _scanHaptic();
     setState(() {
       _isCompleting = true;
       _completionSubtitle = 'Đã quét mã: $barcode';
@@ -126,9 +162,8 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
   void _finishScanning() {
     if (_isCompleting) return;
-    try {
-      HapticFeedback.heavyImpact();
-    } catch (_) {}
+    _scannerKey.currentState?.pauseCamera();
+    _scanHaptic();
     setState(() {
       _isCompleting = true;
       _completionSubtitle = null;
@@ -138,9 +173,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
       if (mounted && ModalRoute.of(context)?.isCurrent == true) {
         Navigator.of(context).pop(
           SmartScannerResult.multi(
-            _controller.scannedBarcodes.map(
-              (k, v) => MapEntry(k, v.count),
-            ),
+            _controller.scannedBarcodes.map((k, v) => MapEntry(k, v.count)),
           ),
         );
       }
@@ -177,75 +210,60 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
             Format.codabar;
 
   Future<void> _pickImageFromGallery() async {
-    if (_isPickingImage) return;
+    if (_isPickingImage || _isCompleting) return;
 
     // Show the loading overlay in 'selecting' state immediately — before the gallery opens
     setState(() => _galleryStatus = _GalleryStatus.selecting);
-
-    final picker = ImagePicker();
-    // Forces JPEG output instead of the gallery's original format — modern
-    // iPhones store photos as HEIC by default, which has been an unreliable
-    // input for some ML Kit / vision libraries when read directly by file
-    // path rather than going through the camera's own image pipeline.
-    final XFile? image = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 100,
-    );
-    if (image == null) {
-      // User cancelled — hide loading.
-      if (mounted) setState(() => _galleryStatus = _GalleryStatus.idle);
-      return;
-    }
-
-    // Image selected — proceed to barcode detection with 'analyzing' status.
-    if (!mounted) return;
-    setState(() => _galleryStatus = _GalleryStatus.analyzing);
+    _loadingController.repeat();
 
     try {
+      await _scannerKey.currentState?.pauseCamera();
+      if (!mounted) return;
+      final picker = ImagePicker();
+      // Forces JPEG output instead of the gallery's original format — modern
+      // iPhones store photos as HEIC by default, which has been an unreliable
+      // input for some ML Kit / vision libraries when read directly by file
+      // path rather than going through the camera's own image pipeline.
+      final XFile? image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 100,
+      );
+      if (image == null) {
+        // User cancelled — hide loading.
+        if (mounted) setState(() => _galleryStatus = _GalleryStatus.idle);
+        return;
+      }
+
+      // Image selected — proceed to barcode detection with 'analyzing' status.
+      if (!mounted) return;
+      setState(() => _galleryStatus = _GalleryStatus.analyzing);
+
       // ZXing first: testing showed it catching barcodes ML Kit's decoder
       // missed entirely (0 raw results) on the same photo. ML Kit only runs as
       // a fallback if ZXing comes up empty.
-      final zxCodes = await zx.readBarcodesImagePathString(
+      List<String> values = await compute(_decodeGalleryBarcodes, (
         image.path,
-        DecodeParams(
-          format: _zxingAllowedFormats,
-          tryHarder: true,
-          tryRotate: true,
-          // readBarcodesImagePath (used internally by this call) converts the
-          // file to RGB bytes but does NOT set imageFormat itself — leaving
-          // the default (ImageFormat.lum, 1 byte/pixel) causes the RGB data
-          // (3 bytes/pixel) to be misread entirely, so decoding silently fails
-          // on every image regardless of content. Must set this explicitly.
-          imageFormat: ImageFormat.rgb,
-          // A gallery photo deserves full detail — don't downscale it to
-          // ZXing's ~768px default, which is tuned for live camera frames.
-          maxSize: 4000,
-        ),
-      );
-
-
-      List<String> values = zxCodes.codes
-          .where((c) => c.isValid)
-          .map((c) => c.text)
-          .where((t) => t != null && t.isNotEmpty)
-          .cast<String>()
-          .toList();
+        _zxingAllowedFormats,
+      ), debugLabel: 'gallery-barcode-decode');
 
       if (values.isEmpty) {
         final inputImage = InputImage.fromFilePath(image.path);
         // Use BarcodeFormat.all to enable omnidirectional scanning, then filter in Dart
-        final barcodeScanner = BarcodeScanner(formats: const [BarcodeFormat.all]);
+        final barcodeScanner = BarcodeScanner(
+          formats: const [BarcodeFormat.all],
+        );
 
-        final rawBarcodes = await barcodeScanner.processImage(inputImage);
-        barcodeScanner.close();
-
-
-        values = rawBarcodes
-            .where((b) => _scannerFormats.contains(b.format))
-            .map((b) => b.displayValue ?? b.rawValue)
-            .where((v) => v != null)
-            .cast<String>()
-            .toList();
+        try {
+          final rawBarcodes = await barcodeScanner.processImage(inputImage);
+          values = rawBarcodes
+              .where((b) => _scannerFormats.contains(b.format))
+              .map((b) => b.displayValue ?? b.rawValue)
+              .where((v) => v != null)
+              .cast<String>()
+              .toList();
+        } finally {
+          await barcodeScanner.close();
+        }
       }
 
       if (!mounted) return;
@@ -277,6 +295,14 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
         icon: Icons.error_rounded,
         color: const Color(0xFFEF4444),
       );
+    } finally {
+      if (mounted) {
+        _loadingController.stop();
+        setState(() => _galleryStatus = _GalleryStatus.idle);
+        if (!_isCompleting && ModalRoute.of(context)?.isCurrent == true) {
+          await _scannerKey.currentState?.resumeCamera();
+        }
+      }
     }
   }
 
@@ -346,7 +372,34 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
       );
   }
 
+  /// Scan-result feedback; a no-op when vibration is off for this scanner.
+  bool get _vibrationEnabled =>
+      widget.enableVibration ?? SmartScannerSettings.vibrateOnScan.value;
+
+  void _scanHaptic() {
+    if (!_vibrationEnabled) return;
+    if (_vibrateAndroid()) return;
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (_) {}
+  }
+
+  static const int _androidScanVibrationMs = 70;
+
+  /// On Android, HapticFeedback is *touch* feedback (usage TOUCH), which the
+  /// system silently drops whenever "touch vibration" is off in Settings — so
+  /// scan confirmations never vibrated on such phones. A scan result isn't a
+  /// touch echo, and the host opted in via enableVibration, so drive the
+  /// vibrator directly there. Returns whether it handled the vibration.
+  bool _vibrateAndroid() {
+    if (defaultTargetPlatform != TargetPlatform.android) return false;
+    Vibration.vibrate(duration: _androidScanVibrationMs).catchError((_) {});
+    return true;
+  }
+
   void _triggerVibration() {
+    if (!_vibrationEnabled) return;
+    if (_vibrateAndroid()) return;
     try {
       HapticFeedback.heavyImpact();
     } catch (_) {}
@@ -358,7 +411,9 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   /// Loading overlay shown while picking/processing a gallery image.
   Widget _buildLoadingOverlay() {
     final isSelecting = _galleryStatus == _GalleryStatus.selecting;
-    final title = isSelecting ? 'Đang chọn ảnh từ thư viện' : 'Đang phân tích ảnh';
+    final title = isSelecting
+        ? 'Đang chọn ảnh từ thư viện'
+        : 'Đang phân tích ảnh';
 
     return AnimatedOpacity(
       opacity: _isPickingImage ? 1.0 : 0.0,
@@ -407,8 +462,8 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                         isSelecting
                             ? Icons.photo_library_rounded
                             : (widget.isQRMode
-                                ? Icons.qr_code_scanner
-                                : Icons.barcode_reader),
+                                  ? Icons.qr_code_scanner
+                                  : Icons.barcode_reader),
                         color: const Color(0xFF818CF8),
                         size: 48,
                       ),
@@ -471,7 +526,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
         PopScope(
         canPop: true,
         onPopInvokedWithResult: (didPop, result) {
-          // Stop the heavy 1080p camera stream immediately when starting the pop animation
+          // Stop the camera stream immediately when starting the pop animation
           _scannerKey.currentState?.pauseCamera();
         },
         child: AnimatedBuilder(
@@ -513,6 +568,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                 _controller.setZoom(zoomLevel);
               },
               onDetect: (barcodes) async {
+                if (_isCompleting || _isPickingImage) return;
                 if (barcodes.isNotEmpty && !_controller.isProcessing) {
                   if (!_controller.isMultiScan) {
                     final firstBarcode = barcodes.first.displayValue ?? barcodes.first.rawValue;

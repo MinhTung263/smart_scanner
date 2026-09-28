@@ -89,6 +89,30 @@ if (result != null && result.isMultiScan) {
 }
 ```
 
+### 4. Vibrate-on-Scan Setting
+
+The phone vibrates on each successful scan by default. The choice is an app-wide
+setting saved on the device, and every scanner follows it:
+
+```dart
+// Drop-in toggle for any settings screen:
+ListTile(
+  title: const Text('Vibrate on scan'),
+  trailing: const SmartScannerVibrationSwitch(),
+);
+
+// Or change / read it from code:
+await SmartScannerSettings.setVibrateOnScan(false);
+final isOn = SmartScannerSettings.vibrateOnScan.value; // a ValueListenable<bool>
+```
+
+To force vibration on or off for a single scan regardless of the setting, pass
+`enableVibration` (available on `scan`, `scanBarcode`, `scanQR` and `scanBasic`):
+
+```dart
+final result = await SmartScanner.scanBarcode(context, enableVibration: false);
+```
+
 ## License
 
 MIT License

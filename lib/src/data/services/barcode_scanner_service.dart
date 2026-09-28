@@ -1,5 +1,6 @@
 import 'dart:io';
-import 'dart:math' show Point;
+import 'nv21_converter.dart';
+import 'dart:math' show Point, max;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +9,9 @@ import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart
 class BarcodeScannerService {
   BarcodeScanner? _barcodeScanner;
 
-  BarcodeScannerService({List<BarcodeFormat> formats = const [BarcodeFormat.all]}) {
+  BarcodeScannerService({
+    List<BarcodeFormat> formats = const [BarcodeFormat.all],
+  }) {
     _barcodeScanner = BarcodeScanner(formats: formats);
   }
 
@@ -16,69 +19,31 @@ class BarcodeScannerService {
   /// which speeds up detection per frame (verified against the plugin's native
   /// Android BarcodeScannerOptions.setBarcodeFormats call).
   Future<void> updateFormats(List<BarcodeFormat> formats) async {
-    final oldScanner = _barcodeScanner;
-    _barcodeScanner = BarcodeScanner(formats: formats);
-    await oldScanner?.close();
+    _pendingFormats = List.of(formats);
   }
 
   Future<void> close() async {
-    await _barcodeScanner?.close();
-    _barcodeScanner = null;
-  }
-
-  /// Converts CameraImage to InputImage for ML Kit
-  Uint8List? _reusableBuffer;
-
-  /// Stretches a low-contrast Y-plane (luma) toward the full black/white range
-  /// so ML Kit has more signal to work with on small or washed-out barcodes.
-  /// Skipped when the frame already has decent contrast, to avoid the extra
-  /// pass on every frame.
-  final List<int> _reusableHistogram = List<int>.filled(256, 0);
-
-  void _applyAdaptiveContrastStretch(Uint8List nv21Bytes, int yPlaneLength) {
-    // Percentile-based bounds instead of raw min/max: a small glare hotspot
-    // (or a few pure-black shadow pixels) can pull the raw max/min to an
-    // extreme and make the frame look "already high contrast" globally, even
-    // though the barcode itself is still a washed-out, low-contrast patch.
-    // Clipping the extreme ~1% at each end ignores that handful of outlier
-    // pixels instead of letting them dictate the whole decision.
-    final histogram = _reusableHistogram;
-    histogram.fillRange(0, 256, 0);
-    for (int i = 0; i < yPlaneLength; i++) {
-      histogram[nv21Bytes[i]]++;
-    }
-
-    final int clipCount = (yPlaneLength * 0.01).round();
-
-    int lo = 0;
-    int cumulative = 0;
-    for (int v = 0; v < 256; v++) {
-      cumulative += histogram[v];
-      if (cumulative > clipCount) {
-        lo = v;
-        break;
+    if (_closed) return;
+    _closed = true;
+    try {
+      await _processing;
+    } finally {
+      try {
+        await _converter.close();
+      } finally {
+        await _barcodeScanner?.close();
+        _barcodeScanner = null;
       }
     }
-
-    int hi = 255;
-    cumulative = 0;
-    for (int v = 255; v >= 0; v--) {
-      cumulative += histogram[v];
-      if (cumulative > clipCount) {
-        hi = v;
-        break;
-      }
-    }
-
-    final int range = hi - lo;
-    if (range <= 0 || range >= 180) return;
-
-    final double scale = 255.0 / range;
-    for (int i = 0; i < yPlaneLength; i++) {
-      final int stretched = ((nv21Bytes[i] - lo) * scale).round();
-      nv21Bytes[i] = stretched < 0 ? 0 : (stretched > 255 ? 255 : stretched);
-    }
   }
+
+  final Nv21Converter _converter = Nv21Converter();
+  final Stopwatch _clock = Stopwatch()..start();
+  int _lastContrastAttemptMs = 0;
+  int _missedFrames = 0;
+  bool _closed = false;
+  Future<(List<Barcode>, bool, bool, bool, bool)>? _processing;
+  List<BarcodeFormat>? _pendingFormats;
 
   // --- Camera motion detection (for refocus-on-settle and the adaptive
   // frame-rate throttle in CustomBarcodeScannerState) ---
@@ -88,11 +53,13 @@ class BarcodeScannerService {
   bool _justSettled = false;
   bool _isMoving = true; // safe default (assume active) until first check runs
   bool _isBlurry = false; // safe default (assume sharp) until first check runs
-  bool _hasGlare = false; // safe default (assume no glare) until first check runs
+  bool _hasGlare =
+      false; // safe default (assume no glare) until first check runs
 
   static const int _motionSampleStep = 61; // sparse sampling keeps this cheap
   static const int _motionStillThreshold = 6; // avg per-sample luma delta
-  static const int _quietFramesToSettle = 6; // consecutive quiet frames required
+  static const int _quietFramesToSettle =
+      6; // consecutive quiet frames required
 
   /// Compares a sparse sample of the Y-plane against the previous frame to
   /// detect physical camera motion. [justSettled] is true exactly once, on
@@ -109,15 +76,19 @@ class BarcodeScannerService {
     int pixelStride = 1,
     int bytesPerRow = 0,
   }) {
-    final int effectiveBytesPerRow = bytesPerRow > 0 ? bytesPerRow : width * pixelStride;
+    final int effectiveBytesPerRow = bytesPerRow > 0
+        ? bytesPerRow
+        : width * pixelStride;
     final int yPlaneLength = width * height;
-    final int sampleCount = yPlaneLength ~/ _motionSampleStep;
+    final int sampleStep = max(_motionSampleStep, yPlaneLength ~/ 2048);
+    final int sampleCount = yPlaneLength ~/ sampleStep;
     if (sampleCount < 2) return (isMoving: true, justSettled: false);
 
-    if (_motionSampleBuffer == null || _motionSampleBuffer!.length != sampleCount) {
+    if (_motionSampleBuffer == null ||
+        _motionSampleBuffer!.length != sampleCount) {
       _motionSampleBuffer = Uint8List(sampleCount);
       for (int i = 0; i < sampleCount; i++) {
-        final int sampleIdx = i * _motionSampleStep;
+        final int sampleIdx = i * sampleStep;
         final int x = sampleIdx % width;
         final int y = sampleIdx ~/ width;
         final int byteIdx = y * effectiveBytesPerRow + x * pixelStride;
@@ -130,7 +101,7 @@ class BarcodeScannerService {
 
     int totalDelta = 0;
     for (int i = 0; i < sampleCount; i++) {
-      final int sampleIdx = i * _motionSampleStep;
+      final int sampleIdx = i * sampleStep;
       final int x = sampleIdx % width;
       final int y = sampleIdx ~/ width;
       final int byteIdx = y * effectiveBytesPerRow + x * pixelStride;
@@ -161,9 +132,12 @@ class BarcodeScannerService {
   // --- Sharpness estimation (for the "you're too close, back away a bit"
   // hint — the phone's lens has a minimum focus distance no amount of
   // autofocus retriggering can overcome once crossed). ---
-  static const int _sharpnessSampleStride = 47; // sparse sampling keeps this cheap
-  static const int _sharpnessGap = 3; // pixel gap used to measure a local gradient
-  static const double _blurySharpnessThreshold = 5.0; // avg local gradient below this ~= blurry
+  static const int _sharpnessSampleStride =
+      47; // sparse sampling keeps this cheap
+  static const int _sharpnessGap =
+      3; // pixel gap used to measure a local gradient
+  static const double _blurySharpnessThreshold =
+      5.0; // avg local gradient below this ~= blurry
 
   /// Average local horizontal gradient over a sparse grid of the Y-plane, as
   /// a cheap proxy for "how much crisp edge detail is in this frame". Sharp,
@@ -177,17 +151,21 @@ class BarcodeScannerService {
     int pixelStride = 1,
     int bytesPerRow = 0,
   }) {
-    final int effectiveBytesPerRow = bytesPerRow > 0 ? bytesPerRow : width * pixelStride;
+    final int effectiveBytesPerRow = bytesPerRow > 0
+        ? bytesPerRow
+        : width * pixelStride;
     final int yPlaneLength = width * height;
     int totalGradient = 0;
     int samples = 0;
 
-    for (int i = 0; i + _sharpnessGap < yPlaneLength; i += _sharpnessSampleStride) {
+    final sampleStep = max(_sharpnessSampleStride, yPlaneLength ~/ 2048);
+    for (int i = 0; i + _sharpnessGap < yPlaneLength; i += sampleStep) {
       final int col = i % width;
       if (col + _sharpnessGap >= width) continue;
       final int row = i ~/ width;
       final int idx1 = row * effectiveBytesPerRow + col * pixelStride;
-      final int idx2 = row * effectiveBytesPerRow + (col + _sharpnessGap) * pixelStride;
+      final int idx2 =
+          row * effectiveBytesPerRow + (col + _sharpnessGap) * pixelStride;
       totalGradient += (bytes[idx1] - bytes[idx2]).abs();
       samples++;
     }
@@ -200,9 +178,11 @@ class BarcodeScannerService {
   // --- Glare estimation (backing away or changing angle reduces a specular
   // reflection's share of the frame and often clears it entirely — same
   // "back away" remedy as the blur hint, different cause). ---
-  static const int _glareSampleStep = 5; // denser than motion/sharpness sampling: glare can be a small hotspot
+  static const int _glareSampleStep =
+      5; // denser than motion/sharpness sampling: glare can be a small hotspot
   static const int _glareBrightThreshold = 248; // near-saturated luma
-  static const double _glareAreaRatio = 0.035; // >3.5% of sampled pixels blown out ~= meaningful glare
+  static const double _glareAreaRatio =
+      0.035; // >3.5% of sampled pixels blown out ~= meaningful glare
 
   /// Fraction of a sparse sample of the Y-plane that's blown-out bright, as a
   /// cheap proxy for "is there a specular reflection hot enough to wash out
@@ -217,13 +197,16 @@ class BarcodeScannerService {
     int pixelStride = 1,
     int bytesPerRow = 0,
   }) {
-    final int effectiveBytesPerRow = bytesPerRow > 0 ? bytesPerRow : width * pixelStride;
+    final int effectiveBytesPerRow = bytesPerRow > 0
+        ? bytesPerRow
+        : width * pixelStride;
     final int yPlaneLength = width * height;
-    final int sampleCount = yPlaneLength ~/ _glareSampleStep;
+    final sampleStep = max(_glareSampleStep, yPlaneLength ~/ 2048);
+    final int sampleCount = (yPlaneLength + sampleStep - 1) ~/ sampleStep;
     if (sampleCount == 0) return false;
 
     int brightCount = 0;
-    for (int i = 0; i < yPlaneLength; i += _glareSampleStep) {
+    for (int i = 0; i < yPlaneLength; i += sampleStep) {
       final int x = i % width;
       final int y = i ~/ width;
       final int idx = y * effectiveBytesPerRow + x * pixelStride;
@@ -249,8 +232,14 @@ class BarcodeScannerService {
   /// whatever ML Kit returns for the cropped image, so all downstream code
   /// keeps working with full-frame-relative coordinates unaware cropping ever
   /// happened.
-  ({int cropLeft, int cropTop, int cropWidth, int cropHeight, Offset mlkitOffset})?
-      _computeCropRegion({
+  ({
+    int cropLeft,
+    int cropTop,
+    int cropWidth,
+    int cropHeight,
+    Offset mlkitOffset,
+  })?
+  _computeCropRegion({
     required Rect scanWindow,
     required Size screenSize,
     required Size previewSize,
@@ -265,10 +254,15 @@ class BarcodeScannerService {
     if (screenSize.width <= 0 || screenSize.height <= 0) return null;
 
     final bool isPortrait = screenSize.height > screenSize.width;
-    final double mlkitWidth = isPortrait ? previewSize.height : previewSize.width;
-    final double mlkitHeight = isPortrait ? previewSize.width : previewSize.height;
+    final double mlkitWidth = isPortrait
+        ? previewSize.height
+        : previewSize.width;
+    final double mlkitHeight = isPortrait
+        ? previewSize.width
+        : previewSize.height;
 
-    final double scale = screenSize.width / mlkitWidth > screenSize.height / mlkitHeight
+    final double scale =
+        screenSize.width / mlkitWidth > screenSize.height / mlkitHeight
         ? screenSize.width / mlkitWidth
         : screenSize.height / mlkitHeight;
     final double scaledWidth = mlkitWidth * scale;
@@ -361,7 +355,8 @@ class BarcodeScannerService {
     int cropHeight,
   ) {
     final int cropSize = (cropWidth * cropHeight * 1.5).toInt();
-    if (_reusableCropBuffer == null || _reusableCropBuffer!.length != cropSize) {
+    if (_reusableCropBuffer == null ||
+        _reusableCropBuffer!.length != cropSize) {
       _reusableCropBuffer = Uint8List(cropSize);
     }
     final Uint8List dst = _reusableCropBuffer!;
@@ -377,7 +372,8 @@ class BarcodeScannerService {
     final int uvCropTop = cropTop ~/ 2;
     final int uvRows = cropHeight ~/ 2;
     for (int row = 0; row < uvRows; row++) {
-      final int srcRowStart = srcUvOffset + (uvCropTop + row) * srcWidth + cropLeft;
+      final int srcRowStart =
+          srcUvOffset + (uvCropTop + row) * srcWidth + cropLeft;
       final int dstRowStart = dstUvOffset + row * cropWidth;
       dst.setRange(dstRowStart, dstRowStart + cropWidth, src, srcRowStart);
     }
@@ -397,20 +393,23 @@ class BarcodeScannerService {
       rawBytes: b.rawBytes,
       boundingBox: b.boundingBox.shift(offset),
       cornerPoints: b.cornerPoints
-          .map((p) => Point<int>(
-                (p.x + offset.dx).round(),
-                (p.y + offset.dy).round(),
-              ))
+          .map(
+            (p) => Point<int>(
+              (p.x + offset.dx).round(),
+              (p.y + offset.dy).round(),
+            ),
+          )
           .toList(),
     );
   }
 
-  InputImage? _inputImageFromCameraImage(
+  Future<InputImage?> _inputImageFromCameraImage(
     CameraImage image,
     CameraDescription camera, {
     Rect? scanWindow,
     Size? screenSize,
-  }) {
+  }) async {
+    _lastCropOffset = null;
     final sensorOrientation = camera.sensorOrientation;
     InputImageRotation? rotation;
     if (Platform.isIOS) {
@@ -420,15 +419,18 @@ class BarcodeScannerService {
       if (camera.lensDirection == CameraLensDirection.front) {
         rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
       } else {
-        rotationCompensation = (sensorOrientation - rotationCompensation + 360) % 360;
+        rotationCompensation =
+            (sensorOrientation - rotationCompensation + 360) % 360;
       }
       rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
     }
-    
+
     if (rotation == null) return null;
     if (image.planes.isEmpty) return null;
 
-    final format = Platform.isIOS ? InputImageFormat.bgra8888 : InputImageFormat.nv21;
+    final format = Platform.isIOS
+        ? InputImageFormat.bgra8888
+        : InputImageFormat.nv21;
 
     final Uint8List bytes;
     if (Platform.isIOS) {
@@ -462,94 +464,39 @@ class BarcodeScannerService {
         bytesPerRow: bytesPerRow,
       );
     } else {
-      // Android Zero-Allocation Optimization:
-      // Reuse _reusableBuffer to prevent Garbage Collection (GC) churn and device lag.
-      final int width = image.width;
-      final int height = image.height;
-      final int nv21Size = (width * height * 1.5).toInt();
-      
-      if (_reusableBuffer == null || _reusableBuffer!.length != nv21Size) {
-        _reusableBuffer = Uint8List(nv21Size);
-      }
-      final Uint8List nv21Bytes = _reusableBuffer!;
-      
-      final Plane yPlane = image.planes[0];
-      final int bytesPerRow = yPlane.bytesPerRow;
-      
-      if (bytesPerRow == width) {
-        // Fast path: Y plane is already tightly packed
-        nv21Bytes.setRange(0, width * height, yPlane.bytes);
-      } else {
-        // Slow path: Strip row padding by copying row by row
-        for (int y = 0; y < height; y++) {
-          nv21Bytes.setRange(y * width, (y + 1) * width, yPlane.bytes, y * bytesPerRow);
-        }
-      }
-
-      // Check motion, sharpness and glare on the raw luma before
-      // contrast-stretching it, since the stretch factor varies frame to
-      // frame and would add noise to all three.
-      final motion = _checkMotion(nv21Bytes, width, height);
+      final width = image.width;
+      final height = image.height;
+      // Try the unmodified image first. Contrast recovery is an occasional
+      // fallback after misses, performed off the UI isolate.
+      final now = _clock.elapsedMilliseconds;
+      final enhance = _missedFrames >= 3 && now - _lastContrastAttemptMs >= 800;
+      if (enhance) _lastContrastAttemptMs = now;
+      final nv21Bytes = await _converter.convert(
+        image,
+        enhanceContrast: enhance,
+      );
+      // Use raw luma for diagnostics so contrast changes don't look like motion.
+      final luma = image.planes.first;
+      final motion = _checkMotion(
+        luma.bytes,
+        width,
+        height,
+        bytesPerRow: luma.bytesPerRow,
+      );
       _isMoving = motion.isMoving;
       _justSettled = motion.justSettled;
-      _isBlurry = _estimateIsBlurry(nv21Bytes, width, height);
-      _hasGlare = _estimateHasGlare(nv21Bytes, width, height);
-
-      _applyAdaptiveContrastStretch(nv21Bytes, width * height);
-
-      // Pack UV planes if present
-      if (image.planes.length >= 2) {
-        final Plane uvPlane = image.planes[1];
-        final int uvBytesPerRow = uvPlane.bytesPerRow;
-        final int uvOffset = width * height;
-
-        if (image.planes.length == 2) {
-          // NV21 format with 2 planes (Plane 0: Y, Plane 1: VU)
-          if (uvBytesPerRow == width) {
-            final int copyLen = (uvPlane.bytes.length).clamp(0, nv21Size - uvOffset);
-            nv21Bytes.setRange(uvOffset, uvOffset + copyLen, uvPlane.bytes);
-          } else {
-            final int uvHeight = height ~/ 2;
-            for (int y = 0; y < uvHeight; y++) {
-              final int srcStart = y * uvBytesPerRow;
-              final int dstStart = uvOffset + y * width;
-              if (srcStart < uvPlane.bytes.length) {
-                final int copyLen = (width).clamp(0, uvPlane.bytes.length - srcStart);
-                if (dstStart + copyLen <= nv21Size) {
-                  nv21Bytes.setRange(dstStart, dstStart + copyLen, uvPlane.bytes, srcStart);
-                }
-              }
-            }
-          }
-        } else if (image.planes.length >= 3) {
-          // YUV_420_888 with 3 planes (Y, U, V) -> interleave V and U into NV21
-          final Plane uPlane = image.planes[1];
-          final Plane vPlane = image.planes[2];
-          final int uRowStride = uPlane.bytesPerRow;
-          final int vRowStride = vPlane.bytesPerRow;
-          final int uPixelStride = uPlane.bytesPerPixel ?? 1;
-          final int vPixelStride = vPlane.bytesPerPixel ?? 1;
-
-          int dstIdx = uvOffset;
-          final int uvHeight = height ~/ 2;
-          final int uvWidth = width ~/ 2;
-
-          for (int y = 0; y < uvHeight; y++) {
-            for (int x = 0; x < uvWidth; x++) {
-              final int uIdx = y * uRowStride + x * uPixelStride;
-              final int vIdx = y * vRowStride + x * vPixelStride;
-
-              if (vIdx < vPlane.bytes.length && uIdx < uPlane.bytes.length && dstIdx + 1 < nv21Size) {
-                nv21Bytes[dstIdx++] = vPlane.bytes[vIdx];
-                nv21Bytes[dstIdx++] = uPlane.bytes[uIdx];
-              }
-            }
-          }
-        }
-      } else {
-        // Fallback: fill UV planes with 128 (neutral chroma) for 1D barcode contrast
-        nv21Bytes.fillRange(width * height, nv21Size, 128);
-      }
+      _isBlurry = _estimateIsBlurry(
+        luma.bytes,
+        width,
+        height,
+        bytesPerRow: luma.bytesPerRow,
+      );
+      _hasGlare = _estimateHasGlare(
+        luma.bytes,
+        width,
+        height,
+        bytesPerRow: luma.bytesPerRow,
+      );
 
       // Try to crop down to (a padded margin around) the visible scan window
       // before handing frames to ML Kit — see _computeCropRegion for why.
@@ -576,7 +523,10 @@ class BarcodeScannerService {
           return InputImage.fromBytes(
             bytes: croppedBytes,
             metadata: InputImageMetadata(
-              size: Size(cropRegion.cropWidth.toDouble(), cropRegion.cropHeight.toDouble()),
+              size: Size(
+                cropRegion.cropWidth.toDouble(),
+                cropRegion.cropHeight.toDouble(),
+              ),
               rotation: rotation,
               format: format,
               bytesPerRow: cropRegion.cropWidth,
@@ -619,20 +569,57 @@ class BarcodeScannerService {
   /// see _computeCropRegion). Returned barcodes are always translated back to
   /// full-frame-relative coordinates, so callers don't need to know whether
   /// cropping happened.
-  Future<(List<Barcode> barcodes, bool justSettled, bool isMoving, bool isBlurry, bool hasGlare)>
-      processCameraImage(
+  Future<
+    (
+      List<Barcode> barcodes,
+      bool justSettled,
+      bool isMoving,
+      bool isBlurry,
+      bool hasGlare,
+    )
+  >
+  processCameraImage(
     CameraImage image,
     CameraDescription camera, {
     Rect? scanWindow,
     Size? screenSize,
   }) async {
-    if (_barcodeScanner == null) return (<Barcode>[], false, true, false, false);
+    if (_closed || _processing != null)
+      return (<Barcode>[], false, true, false, false);
+    try {
+      final future = _processCameraImage(
+        image,
+        camera,
+        scanWindow: scanWindow,
+        screenSize: screenSize,
+      );
+      _processing = future;
+      return await future;
+    } finally {
+      _processing = null;
+    }
+  }
+
+  Future<(List<Barcode>, bool, bool, bool, bool)> _processCameraImage(
+    CameraImage image,
+    CameraDescription camera, {
+    Rect? scanWindow,
+    Size? screenSize,
+  }) async {
+    final formats = _pendingFormats;
+    if (formats != null) {
+      _pendingFormats = null;
+      await _barcodeScanner?.close();
+      _barcodeScanner = BarcodeScanner(formats: formats);
+    }
+    if (_closed || _barcodeScanner == null)
+      return (<Barcode>[], false, true, false, false);
 
     _justSettled = false;
     _isMoving = true;
     _isBlurry = false;
     _hasGlare = false;
-    final inputImage = _inputImageFromCameraImage(
+    final inputImage = await _inputImageFromCameraImage(
       image,
       camera,
       scanWindow: scanWindow,
@@ -643,10 +630,13 @@ class BarcodeScannerService {
     final isBlurry = _isBlurry;
     final hasGlare = _hasGlare;
     final cropOffset = _lastCropOffset;
-    if (inputImage == null) return (<Barcode>[], justSettled, isMoving, isBlurry, hasGlare);
+    if (inputImage == null)
+      return (<Barcode>[], justSettled, isMoving, isBlurry, hasGlare);
 
     try {
+      if (_closed) return (<Barcode>[], false, true, false, false);
       final results = await _barcodeScanner!.processImage(inputImage);
+      _missedFrames = results.isEmpty ? _missedFrames + 1 : 0;
       final translated = cropOffset == null
           ? results
           : results.map((b) => _translateBarcode(b, cropOffset)).toList();
@@ -664,10 +654,15 @@ class BarcodeScannerService {
   }) {
     final bool isPortrait = screenSize.height > screenSize.width;
 
-    final double mlkitWidth = isPortrait ? previewSize.height : previewSize.width;
-    final double mlkitHeight = isPortrait ? previewSize.width : previewSize.height;
+    final double mlkitWidth = isPortrait
+        ? previewSize.height
+        : previewSize.width;
+    final double mlkitHeight = isPortrait
+        ? previewSize.width
+        : previewSize.height;
 
-    final double scale = screenSize.width / mlkitWidth > screenSize.height / mlkitHeight
+    final double scale =
+        screenSize.width / mlkitWidth > screenSize.height / mlkitHeight
         ? screenSize.width / mlkitWidth
         : screenSize.height / mlkitHeight;
 
@@ -763,9 +758,11 @@ class BarcodeScannerService {
         screenSize: screenSize,
       );
 
-      final aDist = (aRect.center.dx - center.dx) * (aRect.center.dx - center.dx) +
+      final aDist =
+          (aRect.center.dx - center.dx) * (aRect.center.dx - center.dx) +
           (aRect.center.dy - center.dy) * (aRect.center.dy - center.dy);
-      final bDist = (bRect.center.dx - center.dx) * (bRect.center.dx - center.dx) +
+      final bDist =
+          (bRect.center.dx - center.dx) * (bRect.center.dx - center.dx) +
           (bRect.center.dy - center.dy) * (bRect.center.dy - center.dy);
 
       return aDist.compareTo(bDist);
