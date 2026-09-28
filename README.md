@@ -102,8 +102,8 @@ ListTile(
 );
 
 // Or change / read it from code:
-await SmartScannerSettings.setVibrateOnScan(false);
-final isOn = SmartScannerSettings.vibrateOnScan.value; // a ValueListenable<bool>
+await SmartScanner.setVibrateOnScan(false);
+final isOn = SmartScanner.vibrateOnScan.value; // a ValueListenable<bool>
 ```
 
 To force vibration on or off for a single scan regardless of the setting, pass

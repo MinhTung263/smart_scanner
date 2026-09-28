@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'nv21_converter.dart';
 import 'dart:math' show Point, max;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -28,19 +27,13 @@ class BarcodeScannerService {
     try {
       await _processing;
     } finally {
-      try {
-        await _converter.close();
-      } finally {
-        await _barcodeScanner?.close();
-        _barcodeScanner = null;
-      }
+      await _barcodeScanner?.close();
+      _barcodeScanner = null;
     }
   }
 
-  final Nv21Converter _converter = Nv21Converter();
-  final Stopwatch _clock = Stopwatch()..start();
-  int _lastContrastAttemptMs = 0;
-  int _missedFrames = 0;
+  // Reused across frames when a frame has to be repacked (YUV_420_888 fallback).
+  Uint8List? _nv21Scratch;
   bool _closed = false;
   Future<(List<Barcode>, bool, bool, bool, bool)>? _processing;
   List<BarcodeFormat>? _pendingFormats;
@@ -466,16 +459,10 @@ class BarcodeScannerService {
     } else {
       final width = image.width;
       final height = image.height;
-      // Try the unmodified image first. Contrast recovery is an occasional
-      // fallback after misses, performed off the UI isolate.
-      final now = _clock.elapsedMilliseconds;
-      final enhance = _missedFrames >= 3 && now - _lastContrastAttemptMs >= 800;
-      if (enhance) _lastContrastAttemptMs = now;
-      final nv21Bytes = await _converter.convert(
-        image,
-        enhanceContrast: enhance,
-      );
-      // Use raw luma for diagnostics so contrast changes don't look like motion.
+      final nv21 = cameraImageToNv21(image, scratch: _nv21Scratch);
+      if (nv21 == null) return null;
+      if (nv21.repacked) _nv21Scratch = nv21.bytes;
+      final nv21Bytes = nv21.bytes;
       final luma = image.planes.first;
       final motion = _checkMotion(
         luma.bytes,
@@ -636,7 +623,6 @@ class BarcodeScannerService {
     try {
       if (_closed) return (<Barcode>[], false, true, false, false);
       final results = await _barcodeScanner!.processImage(inputImage);
-      _missedFrames = results.isEmpty ? _missedFrames + 1 : 0;
       final translated = cropOffset == null
           ? results
           : results.map((b) => _translateBarcode(b, cropOffset)).toList();
@@ -770,4 +756,95 @@ class BarcodeScannerService {
 
     return barcodes;
   }
+}
+
+/// Returns [image] as one tightly packed NV21 buffer (full-res Y plane, then
+/// interleaved VU at quarter resolution) — the only byte layout ML Kit takes
+/// on Android — or null if the frame can't be converted. `repacked` tells
+/// whether the bytes were copied into a buffer of our own (worth reusing as
+/// the next [scratch]) rather than being the camera's own memory.
+///
+/// With `ImageFormatGroup.nv21` the camera plugin already packs frames
+/// natively, so they're passed through without copying (just trimmed when the
+/// plugin's buffer has trailing bytes from a padded Y plane). Only the
+/// YUV_420_888 fallback — separate, possibly padded planes — is repacked,
+/// into [scratch] when it's the right size.
+@visibleForTesting
+({Uint8List bytes, bool repacked})? cameraImageToNv21(
+  CameraImage image, {
+  Uint8List? scratch,
+}) {
+  final int width = image.width;
+  final int height = image.height;
+  if (image.planes.isEmpty || width.isOdd || height.isOdd) return null;
+  final int ySize = width * height;
+  final int nv21Size = ySize * 3 ~/ 2;
+  final yPlane = image.planes.first;
+
+  if (image.planes.length == 1 &&
+      yPlane.bytesPerRow == width &&
+      yPlane.bytes.length >= nv21Size) {
+    return (
+      bytes: yPlane.bytes.length == nv21Size
+          ? yPlane.bytes
+          : Uint8List.sublistView(yPlane.bytes, 0, nv21Size),
+      repacked: false,
+    );
+  }
+
+  if (yPlane.bytes.length < (height - 1) * yPlane.bytesPerRow + width) {
+    return null;
+  }
+  final Uint8List dst = scratch != null && scratch.length == nv21Size
+      ? scratch
+      : Uint8List(nv21Size);
+  for (int row = 0; row < height; row++) {
+    dst.setRange(
+      row * width,
+      (row + 1) * width,
+      yPlane.bytes,
+      row * yPlane.bytesPerRow,
+    );
+  }
+
+  final int uvRows = height ~/ 2;
+  if (image.planes.length >= 3) {
+    // YUV_420_888: interleave V and U, honoring each plane's strides.
+    final uPlane = image.planes[1];
+    final vPlane = image.planes[2];
+    final int uStride = uPlane.bytesPerPixel ?? 1;
+    final int vStride = vPlane.bytesPerPixel ?? 1;
+    int out = ySize;
+    for (int row = 0; row < uvRows; row++) {
+      final int uRow = row * uPlane.bytesPerRow;
+      final int vRow = row * vPlane.bytesPerRow;
+      for (int col = 0; col < width ~/ 2; col++) {
+        dst[out++] = vPlane.bytes[vRow + col * vStride];
+        dst[out++] = uPlane.bytes[uRow + col * uStride];
+      }
+    }
+    return (bytes: dst, repacked: true);
+  }
+
+  // VU rows either in their own plane or following the Y rows in the same
+  // buffer, at the same stride.
+  final Plane vuPlane = image.planes.length == 2 ? image.planes[1] : yPlane;
+  final int vuStart = image.planes.length == 2
+      ? 0
+      : yPlane.bytesPerRow * height;
+  final int vuStride = vuPlane.bytesPerRow;
+  if (vuPlane.bytes.length < vuStart + (uvRows - 1) * vuStride + width) {
+    // No usable chroma; barcode decoding only needs luma.
+    dst.fillRange(ySize, nv21Size, 128);
+    return (bytes: dst, repacked: true);
+  }
+  for (int row = 0; row < uvRows; row++) {
+    dst.setRange(
+      ySize + row * width,
+      ySize + (row + 1) * width,
+      vuPlane.bytes,
+      vuStart + row * vuStride,
+    );
+  }
+  return (bytes: dst, repacked: true);
 }

@@ -46,7 +46,7 @@ class SmartScannerScreen extends StatefulWidget {
 
   /// Whether the phone vibrates when a code is scanned (single scan, each new
   /// code in multi-scan, and finishing a multi-scan). `null` follows the
-  /// app-wide [SmartScannerSettings.vibrateOnScan]. Light taps on the
+  /// app-wide `SmartScanner.vibrateOnScan`. Light taps on the
   /// scanner's own buttons are unaffected; they follow the system's touch
   /// feedback setting.
   final bool? enableVibration;

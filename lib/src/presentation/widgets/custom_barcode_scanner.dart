@@ -59,7 +59,6 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   late final AnimationController _pulseController;
   late final AnimationController _lockController;
   Timer? _clearBarcodesTimer;
-  Timer? _periodicRefocusTimer;
 
   bool _isDisposed = false;
   bool _isBusy = false;
@@ -246,29 +245,40 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
         _cameraErrorIsPermission = permissionDenied;
       });
     } else {
+      _blurrySinceMs = null;
       _refocusOnScanWindow();
-      _startPeriodicRefocus();
     }
   }
 
-  // Continuous autofocus handles normal scanning. Retry only when our quality
-  // hint indicates persistent trouble, rather than forcing focus every 3s.
-  void _startPeriodicRefocus() {
-    _periodicRefocusTimer?.cancel();
-    _periodicRefocusTimer = Timer.periodic(const Duration(milliseconds: 3000), (
-      _,
-    ) {
-      if (!_canScan) return;
-      // Leave a working focus alone once a code is actually in frame.
-      if (_recognizedBarcodes.isEmpty && _showBackAwayHint) {
-        _refocusOnScanWindow();
-      }
-    });
-  }
+  // Blur-triggered refocus. Continuous autofocus normally keeps up, but it can
+  // settle on the background or lag behind as the phone creeps closer. Once
+  // the view has stayed soft for a short, steady stretch with nothing decoded,
+  // re-aim focus at the scan window. The cooldown lets each focus sweep finish
+  // before judging again, so a scene that simply can't get sharp (closer than
+  // the lens's minimum focus distance) doesn't make the lens hunt nonstop.
+  static const int _blurRefocusAfterMs = 600;
+  static const int _refocusCooldownMs = 2000;
+  int? _blurrySinceMs;
+  int _lastRefocusAtMs = -_refocusCooldownMs;
 
-  void _stopPeriodicRefocus() {
-    _periodicRefocusTimer?.cancel();
-    _periodicRefocusTimer = null;
+  void _refocusIfBlurry({
+    required int now,
+    required bool isBlurry,
+    required bool isMoving,
+    required bool justSettled,
+    required bool hasBarcode,
+  }) {
+    if (!isBlurry || isMoving || hasBarcode) {
+      _blurrySinceMs = null;
+      return;
+    }
+    _blurrySinceMs ??= now;
+    // Just stopped after panning around: no need to wait out the delay.
+    final bool due =
+        justSettled || now - _blurrySinceMs! >= _blurRefocusAfterMs;
+    if (due && now - _lastRefocusAtMs >= _refocusCooldownMs) {
+      _refocusOnScanWindow();
+    }
   }
 
   void _startInactivityChecker() {
@@ -285,7 +295,6 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   void _triggerAutoPause() {
     if (_isAutoPaused || !mounted || _isDisposed) return;
     _session++;
-    _stopPeriodicRefocus();
     _pulseController.stop();
     _lockController.stop();
     _cameraAlive.value = false;
@@ -316,7 +325,6 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     if (_isDisposed) return;
     _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
-    _stopPeriodicRefocus();
     _cameraAlive.value = false;
 
     await _cameraService.stopLiveFeed(
@@ -343,7 +351,6 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     _lockController.dispose();
     _clearBarcodesTimer?.cancel();
     _inactivityCheckTimer?.cancel();
-    _stopPeriodicRefocus();
     _cameraAlive.value = false;
     _cameraAlive.dispose();
     if (!_isDisposed) {
@@ -394,8 +401,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       }
       _isAppActive = false;
       _session++;
-      _stopPeriodicRefocus();
-      _pulseController.stop();
+        _pulseController.stop();
       _cameraAlive.value = false;
       _cameraService.stopLiveFeed(onUpdateUI: _handleCameraUpdateUI);
     }
@@ -435,11 +441,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
         _lastUserActivityMs = now;
       }
 
-      if (justSettled && isBlurry && barcodes.isEmpty) {
-        // The phone just stopped moving after being panned around looking for
-        // a code; refresh focus on the scan window while it's held steady.
-        _refocusOnScanWindow();
-      }
+      _refocusIfBlurry(
+        now: now,
+        isBlurry: isBlurry,
+        isMoving: isMoving,
+        justSettled: justSettled,
+        hasBarcode: barcodes.isNotEmpty,
+      );
 
       _updateBackAwayHint(
         now: now,
@@ -542,6 +550,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   /// of resetting to a whole-frame default point.
   void _refocusOnScanWindow() {
     if (!_canScan) return;
+    _lastRefocusAtMs = _clock.elapsedMilliseconds;
     final scanWindow = widget.scanWindow;
     if (scanWindow == null) {
       _cameraService.focusOnScreenPosition(context, null);
@@ -558,7 +567,6 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     _pulseController.stop();
     _lockController.stop();
     _clearBarcodesTimer?.cancel();
-    _stopPeriodicRefocus();
     await _cameraService.stopLiveFeed();
   }
 

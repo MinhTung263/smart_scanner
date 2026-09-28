@@ -213,7 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: ValueListenableBuilder<bool>(
-              valueListenable: SmartScannerSettings.vibrateOnScan,
+              valueListenable: SmartScanner.vibrateOnScan,
               builder: (context, vibrate, _) => Icon(
                 vibrate ? Icons.vibration : Icons.mobile_off,
                 color: const Color(0xFF4F46E5),

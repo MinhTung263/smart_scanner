@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../smart_scanner_settings.dart';
 
-/// A switch bound to [SmartScannerSettings.vibrateOnScan].
+/// A switch bound to `SmartScanner.vibrateOnScan`.
 ///
 /// Put it anywhere in the host app (a settings screen, a `ListTile`'s
 /// `trailing`, …); flipping it changes and saves scan vibration for every

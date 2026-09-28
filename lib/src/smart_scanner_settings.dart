@@ -1,12 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// App-wide scanner preferences, saved on the device.
-///
-/// Every scan opened through [SmartScanner] follows these unless the call
-/// overrides them explicitly, so a toggle placed anywhere in the host app —
-/// e.g. [SmartScannerVibrationSwitch] on a settings screen — applies to all
-/// scanners at once and survives app restarts.
+/// Storage behind the app-wide scanner preferences. Internal: apps use them
+/// through `SmartScanner.vibrateOnScan` / `SmartScanner.setVibrateOnScan` and
+/// `SmartScannerVibrationSwitch`.
 class SmartScannerSettings {
   SmartScannerSettings._();
 

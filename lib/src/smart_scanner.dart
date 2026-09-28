@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'data/services/camera_service.dart';
 import 'presentation/pages/smart_scanner_page.dart';
@@ -8,6 +9,20 @@ export 'domain/entities/smart_scanner_result.dart';
 
 /// A helper class to easily integrate Smart Scanner into any project.
 class SmartScanner {
+  /// Whether the phone vibrates when a code is scanned. An app-wide setting
+  /// saved on the device: every scanner opened through this class follows it
+  /// unless a call passes `enableVibration`. `true` by default; listen to it
+  /// to rebuild UI when it changes (or use [SmartScannerVibrationSwitch]).
+  ///
+  /// The saved value is read in the background by [warmUp] or when a scanner
+  /// first opens; call [warmUp] early if you show this before that.
+  static ValueListenable<bool> get vibrateOnScan =>
+      SmartScannerSettings.vibrateOnScan;
+
+  /// Turns scan vibration on or off for every scanner and saves the choice.
+  static Future<void> setVibrateOnScan(bool value) =>
+      SmartScannerSettings.setVibrateOnScan(value);
+
   /// Warms up the camera subsystem ahead of time.
   ///
   /// On Android, the first camera call in a process has to bootstrap CameraX
@@ -19,7 +34,8 @@ class SmartScanner {
   /// `runApp()`, or in your splash/home screen's `initState`), so that cost
   /// is paid in the background while the user is still navigating, instead
   /// of blocking the scanner screen on open. Safe to call multiple times —
-  /// later calls are instant no-ops once the camera list is cached.
+  /// later calls are instant no-ops once the camera list is cached. Also
+  /// loads the saved [vibrateOnScan] setting.
   static Future<void> warmUp() async {
     await Future.wait([
       CameraService.preloadCameras(),
@@ -32,8 +48,7 @@ class SmartScanner {
   /// If [isQRMode] is true, the scanner will only look for QR codes.
   /// Otherwise, it will look for traditional 1D barcodes.
   ///
-  /// Vibration on a successful scan follows the app-wide
-  /// [SmartScannerSettings.vibrateOnScan] (see [SmartScannerVibrationSwitch]);
+  /// Vibration on a successful scan follows the app-wide [vibrateOnScan];
   /// pass [enableVibration] to force it on or off for this scan only.
   ///
   /// - A [SmartScannerResult] if barcodes are scanned.
