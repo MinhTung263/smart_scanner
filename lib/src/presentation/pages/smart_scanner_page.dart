@@ -7,8 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:vibration/vibration.dart';
 import 'package:flutter_zxing/flutter_zxing.dart'
     hide CameraController, ResolutionPreset, CameraLensDirection;
-import '../../domain/entities/smart_scanner_result.dart';
-import '../../smart_scanner_settings.dart';
+import '../../smart_scanner.dart';
 
 import '../../controllers/scanner_controller.dart';
 import '../widgets/custom_barcode_scanner.dart';
@@ -92,6 +91,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   late AnimationController _cornerController;
   late AnimationController _loadingController;
   late ScannerController _controller;
+  late ValueListenable<bool> _vibrateOnScan;
   final GlobalKey<CustomBarcodeScannerState> _scannerKey = GlobalKey();
 
   /// Current status of gallery picking & image decoding.
@@ -115,7 +115,8 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
     // The camera preview, guide frame and ML Kit rotation handling all assume
     // portrait, so lock the screen for as long as the scanner is open.
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    SmartScannerSettings.load();
+    // Read now so the saved setting has loaded by the time a code is scanned.
+    _vibrateOnScan = SmartScanner.vibrateOnScan;
     _controller = ScannerController();
 
     _cornerController = AnimationController(
@@ -374,7 +375,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
   /// Scan-result feedback; a no-op when vibration is off for this scanner.
   bool get _vibrationEnabled =>
-      widget.enableVibration ?? SmartScannerSettings.vibrateOnScan.value;
+      widget.enableVibration ?? _vibrateOnScan.value;
 
   void _scanHaptic() {
     if (!_vibrationEnabled) return;

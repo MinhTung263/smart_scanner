@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'data/services/camera_service.dart';
 import 'presentation/pages/smart_scanner_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'domain/entities/smart_scanner_result.dart';
-import 'smart_scanner_settings.dart';
 
 export 'domain/entities/smart_scanner_result.dart';
 
@@ -14,14 +14,41 @@ class SmartScanner {
   /// unless a call passes `enableVibration`. `true` by default; listen to it
   /// to rebuild UI when it changes (or use [SmartScannerVibrationSwitch]).
   ///
-  /// The saved value is read in the background by [warmUp] or when a scanner
-  /// first opens; call [warmUp] early if you show this before that.
-  static ValueListenable<bool> get vibrateOnScan =>
-      SmartScannerSettings.vibrateOnScan;
+  /// The saved value is loaded in the background the first time this is
+  /// read (or by [warmUp]), so it may briefly report the default right after
+  /// launch; listeners are notified once it arrives.
+  static ValueListenable<bool> get vibrateOnScan {
+    _loadSettings();
+    return _vibrateOnScan;
+  }
 
   /// Turns scan vibration on or off for every scanner and saves the choice.
-  static Future<void> setVibrateOnScan(bool value) =>
-      SmartScannerSettings.setVibrateOnScan(value);
+  static Future<void> setVibrateOnScan(bool value) async {
+    _vibrateOnScanChanged = true;
+    _vibrateOnScan.value = value;
+    try {
+      await SharedPreferencesAsync().setBool(_vibrateOnScanKey, value);
+    } catch (_) {
+      // Still applies for this session even if it couldn't be saved.
+    }
+  }
+
+  static const _vibrateOnScanKey = 'smart_scanner.vibrate_on_scan';
+  static final ValueNotifier<bool> _vibrateOnScan = ValueNotifier(true);
+  static bool _vibrateOnScanChanged = false;
+  static Future<void>? _loadingSettings;
+
+  static Future<void> _loadSettings() => _loadingSettings ??= () async {
+    try {
+      final saved = await SharedPreferencesAsync().getBool(_vibrateOnScanKey);
+      // A change made while loading is newer than what was on disk.
+      if (saved != null && !_vibrateOnScanChanged) {
+        _vibrateOnScan.value = saved;
+      }
+    } catch (_) {
+      // No persistent storage available: keep the default.
+    }
+  }();
 
   /// Warms up the camera subsystem ahead of time.
   ///
@@ -37,10 +64,7 @@ class SmartScanner {
   /// later calls are instant no-ops once the camera list is cached. Also
   /// loads the saved [vibrateOnScan] setting.
   static Future<void> warmUp() async {
-    await Future.wait([
-      CameraService.preloadCameras(),
-      SmartScannerSettings.load(),
-    ]);
+    await Future.wait([CameraService.preloadCameras(), _loadSettings()]);
   }
 
   /// Opens the smart scanner screen and returns the scanned result(s).
@@ -72,7 +96,6 @@ class SmartScanner {
     // Warm up the camera list before the route transition starts so the scanner
     // screen doesn't have to wait on availableCameras() after it's already visible.
     CameraService.preloadCameras();
-    SmartScannerSettings.load();
 
     return Navigator.of(context).push<SmartScannerResult?>(
       MaterialPageRoute(
