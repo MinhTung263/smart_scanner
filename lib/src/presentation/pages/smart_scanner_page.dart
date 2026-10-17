@@ -42,6 +42,8 @@ enum _GalleryStatus { idle, selecting, analyzing }
 class SmartScannerScreen extends StatefulWidget {
   final bool isQRMode;
   final bool showMultiScanToggle;
+  /// Opens the screen with multi-scan already enabled.
+  final bool initialMultiScan;
 
   /// Whether the phone vibrates when a code is scanned (single scan, each new
   /// code in multi-scan, and finishing a multi-scan). `null` follows the
@@ -70,6 +72,7 @@ class SmartScannerScreen extends StatefulWidget {
     super.key,
     this.isQRMode = false,
     this.showMultiScanToggle = true,
+    this.initialMultiScan = false,
     this.enableVibration,
     this.bottomWidgetBuilder,
     this.multiScanItemBuilder,
@@ -117,7 +120,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     // Read now so the saved setting has loaded by the time a code is scanned.
     _vibrateOnScan = SmartScanner.vibrateOnScan;
-    _controller = ScannerController();
+    _controller = ScannerController(initialMultiScan: widget.initialMultiScan);
 
     _cornerController = AnimationController(
       vsync: this,

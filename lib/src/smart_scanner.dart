@@ -72,6 +72,10 @@ class SmartScanner {
   /// If [isQRMode] is true, the scanner will only look for QR codes.
   /// Otherwise, it will look for traditional 1D barcodes.
   ///
+  /// Set [initialMultiScan] to `true` to open directly in multi-scan mode.
+  /// This is independent from [showMultiScanToggle], so the toggle can be
+  /// hidden while multi-scan remains enabled.
+  ///
   /// Vibration on a successful scan follows the app-wide [vibrateOnScan];
   /// pass [enableVibration] to force it on or off for this scan only.
   ///
@@ -81,6 +85,7 @@ class SmartScanner {
     BuildContext context, {
     bool isQRMode = false,
     bool showMultiScanToggle = true,
+    bool initialMultiScan = false,
     bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
@@ -102,6 +107,7 @@ class SmartScanner {
         builder: (context) => SmartScannerScreen(
           isQRMode: isQRMode,
           showMultiScanToggle: showMultiScanToggle,
+          initialMultiScan: initialMultiScan,
           enableVibration: enableVibration,
           bottomWidgetBuilder:
               bottomWidgetBuilder ??
@@ -304,12 +310,14 @@ class SmartScanner {
   static Future<SmartScannerResult?> scanQR(
     BuildContext context, {
     bool showMultiScanToggle = true,
+    bool initialMultiScan = false,
     bool? enableVibration,
   }) {
     return scan(
       context,
       isQRMode: true,
       showMultiScanToggle: showMultiScanToggle,
+      initialMultiScan: initialMultiScan,
       enableVibration: enableVibration,
     );
   }
@@ -318,12 +326,14 @@ class SmartScanner {
   static Future<SmartScannerResult?> scanBarcode(
     BuildContext context, {
     bool showMultiScanToggle = true,
+    bool initialMultiScan = false,
     bool? enableVibration,
   }) {
     return scan(
       context,
       isQRMode: false,
       showMultiScanToggle: showMultiScanToggle,
+      initialMultiScan: initialMultiScan,
       enableVibration: enableVibration,
     );
   }
@@ -334,6 +344,7 @@ class SmartScanner {
     BuildContext context, {
     bool isQRMode = false,
     bool showMultiScanToggle = true,
+    bool initialMultiScan = false,
     bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
@@ -351,6 +362,7 @@ class SmartScanner {
         builder: (context) => SmartScannerScreen(
           isQRMode: isQRMode,
           showMultiScanToggle: showMultiScanToggle,
+          initialMultiScan: initialMultiScan,
           enableVibration: enableVibration,
           bottomWidgetBuilder: bottomWidgetBuilder,
           multiScanItemBuilder: multiScanItemBuilder,

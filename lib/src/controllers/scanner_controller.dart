@@ -16,8 +16,11 @@ class ScannerController extends ChangeNotifier {
   Map<String, ScannedBarcode> _scannedBarcodes = {};
   Set<String> _previousVisibleBarcodes = {};
 
-  ScannerController({BarcodeProcessorUseCase? barcodeProcessor})
-    : _barcodeProcessor = barcodeProcessor ?? const BarcodeProcessorUseCase();
+  ScannerController({
+    BarcodeProcessorUseCase? barcodeProcessor,
+    bool initialMultiScan = false,
+  }) : _barcodeProcessor = barcodeProcessor ?? const BarcodeProcessorUseCase(),
+       _isMultiScan = initialMultiScan;
 
   double get currentZoom => _currentZoom;
   bool get isProcessing => _isProcessing;
