@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 class CameraService {
   // Global lock to prevent overlapping camera lifecycles on rapid screen transitions
@@ -154,7 +153,6 @@ class CameraService {
         return null;
       }
 
-      await _lockPortraitCapture(controller);
       await _ensureContinuousAutofocus(controller);
       await _applyDefaultZoom(controller, onZoomInitialized);
 
@@ -240,7 +238,6 @@ class CameraService {
 
       if (isDisposedCheck() || _controller != controller) return null;
 
-      await _lockPortraitCapture(controller);
       await _ensureContinuousAutofocus(controller);
       await _applyDefaultZoom(controller, onZoomInitialized);
 
@@ -263,16 +260,6 @@ class CameraService {
     try {
       await controller.setZoomLevel(zoom);
       onZoomInitialized?.call(zoom);
-    } catch (e) {}
-  }
-
-  /// Pins capture to portrait to match the portrait-only scanner UI. Without
-  /// this, CameraPreview on Android rotates the feed by the *physical* device
-  /// orientation, so tilting the phone turns the preview sideways even though
-  /// the screen itself stays locked.
-  Future<void> _lockPortraitCapture(CameraController controller) async {
-    try {
-      await controller.lockCaptureOrientation(DeviceOrientation.portraitUp);
     } catch (e) {}
   }
 

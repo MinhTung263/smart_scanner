@@ -428,6 +428,9 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       ) = await _barcodeScannerService.processCameraImage(
         image,
         _cameraService.currentCamera!,
+        deviceOrientation:
+            _cameraService.controller!.value.lockedCaptureOrientation ??
+            _cameraService.controller!.value.deviceOrientation,
         scanWindow: widget.scanWindow,
         screenSize: screenSize,
       );
@@ -615,15 +618,18 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     final controller = _cameraService.controller;
 
     final size = MediaQuery.of(context).size;
-    // Raw sensor preview size (e.g. 1280x720, always landscape-oriented on Android)
-    // matching the coordinate space ML Kit's barcode.boundingBox is reported in.
-    // mapMlKitRectToScreen() does its own portrait swap on this raw value.
+    // Raw sensor preview size (e.g. 1280x720 on Android), matching the input
+    // image used by ML Kit.
     final previewSize = isCameraReady && controller != null
         ? controller.value.previewSize!
         : Size.zero;
-    // Portrait-swapped size, used only to size the CameraPreview inside the FittedBox.
+    // CameraPreview swaps its aspect ratio in portrait and keeps the native
+    // ratio in landscape. Match that here so BoxFit.cover never stretches it.
+    final bool isLandscape = size.width > size.height;
     final imageSize = isCameraReady && controller != null
-        ? Size(previewSize.height, previewSize.width)
+        ? (isLandscape
+              ? previewSize
+              : Size(previewSize.height, previewSize.width))
         : Size.zero;
 
     return Stack(

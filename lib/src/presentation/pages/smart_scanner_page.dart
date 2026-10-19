@@ -49,22 +49,34 @@ Rect calculateScanWindow({
   required double sizeRatio,
   required bool isQRMode,
 }) {
-  final double originalWidth = screenSize.width * sizeRatio;
+  final bool isLandscape = screenSize.width > screenSize.height;
+  final double sizingWidth = isLandscape && isQRMode
+      ? screenSize.height
+      : screenSize.width;
+  final double originalWidth = sizingWidth * sizeRatio;
+  final double maxWidth = isLandscape
+      ? screenSize.width * 0.92
+      : screenSize.width;
   final double width = (originalWidth + _scanWindowExtraWidth).clamp(
     0.0,
-    screenSize.width,
+    maxWidth,
   );
   final double heightMultiplier = isQRMode
       ? 1.0
       : (0.15 + 0.35 * ((sizeRatio - 0.2) / 0.7));
   final double originalHeight = originalWidth * heightMultiplier;
+  final double maxHeight = isLandscape
+      ? screenSize.height * (isQRMode ? 0.75 : 0.65)
+      : screenSize.height;
   final double height = (originalHeight * _scanWindowHeightScale).clamp(
     0.0,
-    screenSize.height,
+    maxHeight,
   );
 
   return Rect.fromCenter(
-    center: screenSize.center(const Offset(0, _scanWindowVerticalOffset)),
+    center: screenSize.center(
+      Offset(0, isLandscape ? 0 : _scanWindowVerticalOffset),
+    ),
     width: width,
     height: height,
   );
@@ -145,9 +157,6 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   @override
   void initState() {
     super.initState();
-    // The camera preview, guide frame and ML Kit rotation handling all assume
-    // portrait, so lock the screen for as long as the scanner is open.
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     // Read now so the saved setting has loaded by the time a code is scanned.
     _vibrateOnScan = SmartScanner.vibrateOnScan;
     _controller = ScannerController(isMultiScan: widget.isMultiScan);
@@ -165,9 +174,6 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
   @override
   void dispose() {
-    // An empty list hands orientation back to the host app's own settings
-    // (Info.plist / AndroidManifest) once the scanner closes.
-    SystemChrome.setPreferredOrientations([]);
     _cornerController.dispose();
     _loadingController.dispose();
     _controller.dispose();
