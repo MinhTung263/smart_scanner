@@ -1,8 +1,10 @@
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:smart_scanner/src/data/services/barcode_scanner_service.dart';
 
 CameraImage frame(
@@ -108,5 +110,74 @@ void main() {
       CameraImagePlane(bytes: Uint8List(9), bytesPerRow: 3),
     ]);
     expect(cameraImageToNv21(odd), isNull);
+  });
+  group('scan-window crop geometry', () {
+    const previewSize = Size(1280, 720);
+    const screenSize = Size(360, 800);
+    const scanWindow = Rect.fromLTWH(90, 310, 180, 180);
+
+    for (final rotation in [
+      InputImageRotation.rotation90deg,
+      InputImageRotation.rotation270deg,
+    ]) {
+      test('keeps coordinates aligned for $rotation', () {
+        final region = BarcodeScannerService.computeCropRegion(
+          scanWindow: scanWindow,
+          screenSize: screenSize,
+          previewSize: previewSize,
+          rotation: rotation,
+          lensDirection: CameraLensDirection.back,
+        );
+
+        expect(region, isNotNull);
+        expect(region!.cropLeft.isEven, isTrue);
+        expect(region.cropTop.isEven, isTrue);
+        expect(region.cropWidth.isEven, isTrue);
+        expect(region.cropHeight.isEven, isTrue);
+        expect(
+          region.cropWidth * region.cropHeight,
+          lessThan(previewSize.width * previewSize.height / 2),
+        );
+
+        final fullFrameCenter =
+            region.mlkitOffset +
+            Offset(region.cropHeight / 2, region.cropWidth / 2);
+        final mapped = BarcodeScannerService.mapMlKitRectToScreen(
+          rawRect: Rect.fromCenter(
+            center: fullFrameCenter,
+            width: 20,
+            height: 20,
+          ),
+          previewSize: previewSize,
+          screenSize: screenSize,
+        );
+
+        expect(mapped.center.dx, closeTo(scanWindow.center.dx, 1));
+        expect(mapped.center.dy, closeTo(scanWindow.center.dy, 1));
+      });
+    }
+
+    test('falls back for unsupported camera geometry', () {
+      expect(
+        BarcodeScannerService.computeCropRegion(
+          scanWindow: scanWindow,
+          screenSize: screenSize,
+          previewSize: previewSize,
+          rotation: InputImageRotation.rotation0deg,
+          lensDirection: CameraLensDirection.back,
+        ),
+        isNull,
+      );
+      expect(
+        BarcodeScannerService.computeCropRegion(
+          scanWindow: scanWindow,
+          screenSize: screenSize,
+          previewSize: previewSize,
+          rotation: InputImageRotation.rotation90deg,
+          lensDirection: CameraLensDirection.front,
+        ),
+        isNull,
+      );
+    });
   });
 }

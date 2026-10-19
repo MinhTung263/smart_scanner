@@ -11,6 +11,9 @@ class BarcodeOverlayPainter extends CustomPainter {
   final double lockValue;
   final double zoomLevel;
 
+  final bool useRichEffects;
+  final bool showLabels;
+
   BarcodeOverlayPainter({
     required this.barcodes,
     required this.imageSize,
@@ -19,6 +22,8 @@ class BarcodeOverlayPainter extends CustomPainter {
     this.pulseValue = 0.0,
     this.lockValue = 1.0,
     this.zoomLevel = 1.0,
+    this.useRichEffects = true,
+    this.showLabels = true,
   });
 
   @override
@@ -28,17 +33,23 @@ class BarcodeOverlayPainter extends CustomPainter {
     // Banking App Standard Lock-In & Un-Lock Exit Animation (Bidirectional 60fps):
     // Entry: 1.15x -> 1.0x (Fade In)
     // Exit (Animation back): 1.0x -> 1.15x (Fade Out smoothly)
-    final double lockProgress = Curves.easeInOutCubic.transform(lockValue.clamp(0.0, 1.0));
+    final double lockProgress = Curves.easeInOutCubic.transform(
+      lockValue.clamp(0.0, 1.0),
+    );
     final double scale = 1.15 - 0.15 * lockProgress;
     final double opacity = lockProgress.clamp(0.0, 1.0);
 
-    final Paint glowPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 6.0
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..color = color.withValues(alpha: (0.15 + pulseValue * 0.2) * opacity)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5.0);
+    final Paint? glowPaint = useRichEffects
+        ? (Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 6.0
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..color = color.withValues(
+              alpha: (0.15 + pulseValue * 0.2) * opacity,
+            )
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5.0))
+        : null;
 
     final Paint corePaint = Paint()
       ..style = PaintingStyle.stroke
@@ -74,14 +85,14 @@ class BarcodeOverlayPainter extends CustomPainter {
 
       // 2. Crisp corner brackets
       final path = _bracketPath(rect);
-      canvas.drawPath(path, glowPaint);
+      if (glowPaint != null) canvas.drawPath(path, glowPaint);
       canvas.drawPath(path, corePaint);
 
       // 3. Clean Checkmark Icon Badge at Center (Banking App Standard)
       _drawCheckmarkBadge(canvas, center, opacity * lockProgress);
 
       // 4. Label (if display value present)
-      if (barcode.displayValue != null && lockProgress > 0.6) {
+      if (showLabels && barcode.displayValue != null && lockProgress > 0.6) {
         _drawLabel(canvas, rect, barcode.displayValue!);
       }
     }
@@ -91,15 +102,16 @@ class BarcodeOverlayPainter extends CustomPainter {
     if (scaleProgress <= 0.05) return;
     final double radius = 14.0 * scaleProgress;
 
-    // Badge background glow
-    canvas.drawCircle(
-      center,
-      radius + 4,
-      Paint()
-        ..style = PaintingStyle.fill
-        ..color = color.withValues(alpha: 0.25 * scaleProgress)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6.0),
-    );
+    if (useRichEffects) {
+      canvas.drawCircle(
+        center,
+        radius + 4,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = color.withValues(alpha: 0.25 * scaleProgress)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6.0),
+      );
+    }
 
     // Badge solid green circle
     canvas.drawCircle(
@@ -114,7 +126,10 @@ class BarcodeOverlayPainter extends CustomPainter {
     final Path checkPath = Path()
       ..moveTo(center.dx - 4.5 * scaleProgress, center.dy + 0.5 * scaleProgress)
       ..lineTo(center.dx - 1.0 * scaleProgress, center.dy + 4.0 * scaleProgress)
-      ..lineTo(center.dx + 5.0 * scaleProgress, center.dy - 3.5 * scaleProgress);
+      ..lineTo(
+        center.dx + 5.0 * scaleProgress,
+        center.dy - 3.5 * scaleProgress,
+      );
 
     canvas.drawPath(
       checkPath,
@@ -135,7 +150,8 @@ class BarcodeOverlayPainter extends CustomPainter {
     double radius = 8.0;
 
     final double halfShortSide = rect.shortestSide / 2;
-    if (cornerLength > halfShortSide) cornerLength = halfShortSide.clamp(2.0, 28.0);
+    if (cornerLength > halfShortSide)
+      cornerLength = halfShortSide.clamp(2.0, 28.0);
     if (radius > cornerLength / 2) radius = cornerLength / 2;
 
     final double left = rect.left;
@@ -193,8 +209,9 @@ class BarcodeOverlayPainter extends CustomPainter {
     // Prefer sitting just above the box; drop below it if there isn't room
     // (e.g. the barcode sits near the top edge of the screen).
     final bool fitsAbove = rect.top - labelHeight - 8 >= 0;
-    final double labelTop =
-        fitsAbove ? rect.top - labelHeight - 8 : rect.bottom + 8;
+    final double labelTop = fitsAbove
+        ? rect.top - labelHeight - 8
+        : rect.bottom + 8;
 
     double labelLeft = rect.center.dx - labelWidth / 2;
     final double maxLeft = screenSize.width - labelWidth - 4.0;
@@ -211,7 +228,10 @@ class BarcodeOverlayPainter extends CustomPainter {
     canvas.drawRRect(labelRRect, labelBgPaint);
 
     canvas.drawCircle(
-      Offset(labelLeft + horizontalPadding + dotDiameter / 2, labelTop + labelHeight / 2),
+      Offset(
+        labelLeft + horizontalPadding + dotDiameter / 2,
+        labelTop + labelHeight / 2,
+      ),
       dotDiameter / 2,
       Paint()..color = color,
     );
@@ -233,6 +253,8 @@ class BarcodeOverlayPainter extends CustomPainter {
         oldDelegate.zoomLevel != zoomLevel ||
         oldDelegate.color != color ||
         oldDelegate.pulseValue != pulseValue ||
-        oldDelegate.lockValue != lockValue;
+        oldDelegate.lockValue != lockValue ||
+        oldDelegate.useRichEffects != useRichEffects ||
+        oldDelegate.showLabels != showLabels;
   }
 }

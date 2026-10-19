@@ -6,6 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'domain/entities/smart_scanner_result.dart';
 
 export 'domain/entities/smart_scanner_result.dart';
+export 'domain/entities/scanner_performance_mode.dart';
+
+import 'domain/entities/scanner_performance_mode.dart';
 
 /// A helper class to easily integrate Smart Scanner into any project.
 class SmartScanner {
@@ -79,6 +82,14 @@ class SmartScanner {
   /// Vibration on a successful scan follows the app-wide [vibrateOnScan];
   /// pass [enableVibration] to force it on or off for this scan only.
   ///
+  /// [performanceMode] defaults to adaptive scheduling based on real decoder
+  /// cost. Use efficiency for long-running POS sessions, or performance for
+  /// modern devices when the lowest scan latency matters.
+  ///
+  /// Android crops camera frames to the padded scan window by default. Set
+  /// [enableScanWindowCrop] to false to fall back to full-frame decoding on a
+  /// device with an unusual camera coordinate system.
+  ///
   /// - A [SmartScannerResult] if barcodes are scanned.
   /// - `null` if the user cancels or goes back without scanning.
   static Future<SmartScannerResult?> scan(
@@ -87,6 +98,8 @@ class SmartScanner {
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
     bool? enableVibration,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.adaptive,
+    bool enableScanWindowCrop = true,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
     Widget Function(BuildContext context, int totalItems, int totalQuantity)?
@@ -109,6 +122,8 @@ class SmartScanner {
           showMultiScanToggle: showMultiScanToggle,
           initialMultiScan: initialMultiScan,
           enableVibration: enableVibration,
+          performanceMode: performanceMode,
+          enableScanWindowCrop: enableScanWindowCrop,
           bottomWidgetBuilder:
               bottomWidgetBuilder ??
               (context, barcode) {
@@ -312,6 +327,8 @@ class SmartScanner {
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
     bool? enableVibration,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.adaptive,
+    bool enableScanWindowCrop = true,
   }) {
     return scan(
       context,
@@ -319,6 +336,8 @@ class SmartScanner {
       showMultiScanToggle: showMultiScanToggle,
       initialMultiScan: initialMultiScan,
       enableVibration: enableVibration,
+      performanceMode: performanceMode,
+      enableScanWindowCrop: enableScanWindowCrop,
     );
   }
 
@@ -328,6 +347,8 @@ class SmartScanner {
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
     bool? enableVibration,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.adaptive,
+    bool enableScanWindowCrop = true,
   }) {
     return scan(
       context,
@@ -335,6 +356,8 @@ class SmartScanner {
       showMultiScanToggle: showMultiScanToggle,
       initialMultiScan: initialMultiScan,
       enableVibration: enableVibration,
+      performanceMode: performanceMode,
+      enableScanWindowCrop: enableScanWindowCrop,
     );
   }
 
@@ -346,6 +369,8 @@ class SmartScanner {
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
     bool? enableVibration,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.adaptive,
+    bool enableScanWindowCrop = true,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
     Widget Function(BuildContext context, int totalItems, int totalQuantity)?
@@ -364,6 +389,8 @@ class SmartScanner {
           showMultiScanToggle: showMultiScanToggle,
           initialMultiScan: initialMultiScan,
           enableVibration: enableVibration,
+          performanceMode: performanceMode,
+          enableScanWindowCrop: enableScanWindowCrop,
           bottomWidgetBuilder: bottomWidgetBuilder,
           multiScanItemBuilder: multiScanItemBuilder,
           multiScanSummaryBuilder: multiScanSummaryBuilder,

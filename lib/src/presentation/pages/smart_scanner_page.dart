@@ -42,6 +42,7 @@ enum _GalleryStatus { idle, selecting, analyzing }
 class SmartScannerScreen extends StatefulWidget {
   final bool isQRMode;
   final bool showMultiScanToggle;
+
   /// Opens the screen with multi-scan already enabled.
   final bool initialMultiScan;
 
@@ -51,6 +52,8 @@ class SmartScannerScreen extends StatefulWidget {
   /// scanner's own buttons are unaffected; they follow the system's touch
   /// feedback setting.
   final bool? enableVibration;
+  final ScannerPerformanceMode performanceMode;
+  final bool enableScanWindowCrop;
   final Widget Function(BuildContext context, String barcode)?
   bottomWidgetBuilder;
   final Widget Function(BuildContext context, String barcode)?
@@ -74,6 +77,8 @@ class SmartScannerScreen extends StatefulWidget {
     this.showMultiScanToggle = true,
     this.initialMultiScan = false,
     this.enableVibration,
+    this.performanceMode = ScannerPerformanceMode.adaptive,
+    this.enableScanWindowCrop = true,
     this.bottomWidgetBuilder,
     this.multiScanItemBuilder,
     this.multiScanSummaryBuilder,
@@ -214,7 +219,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
             Format.codabar;
 
   Future<void> _pickImageFromGallery() async {
-    if (_isPickingImage || _isCompleting) return;
+    if (!widget.isQRMode || _isPickingImage || _isCompleting) return;
 
     // Show the loading overlay in 'selecting' state immediately — before the gallery opens
     setState(() => _galleryStatus = _GalleryStatus.selecting);
@@ -377,8 +382,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   }
 
   /// Scan-result feedback; a no-op when vibration is off for this scanner.
-  bool get _vibrationEnabled =>
-      widget.enableVibration ?? _vibrateOnScan.value;
+  bool get _vibrationEnabled => widget.enableVibration ?? _vibrateOnScan.value;
 
   void _scanHaptic() {
     if (!_vibrationEnabled) return;
@@ -527,391 +531,425 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
       extendBodyBehindAppBar: true,
       body: Stack(
         children: [
-        PopScope(
-        canPop: true,
-        onPopInvokedWithResult: (didPop, result) {
-          // Stop the camera stream immediately when starting the pop animation
-          _scannerKey.currentState?.pauseCamera();
-        },
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, child) {
-            final scanWindowWidth =
-                size.width * _controller.scanWindowSizeRatio;
+          PopScope(
+            canPop: true,
+            onPopInvokedWithResult: (didPop, result) {
+              // Stop the camera stream immediately when starting the pop animation
+              _scannerKey.currentState?.pauseCamera();
+            },
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                final scanWindowWidth =
+                    size.width * _controller.scanWindowSizeRatio;
 
-            final double heightMultiplier = widget.isQRMode
-                ? 1.0
-                : (0.15 +
-                      0.35 * ((_controller.scanWindowSizeRatio - 0.2) / 0.7));
-            final scanWindowHeight = scanWindowWidth * heightMultiplier;
+                final double heightMultiplier = widget.isQRMode
+                    ? 1.0
+                    : (0.15 +
+                          0.35 *
+                              ((_controller.scanWindowSizeRatio - 0.2) / 0.7));
+                final scanWindowHeight = scanWindowWidth * heightMultiplier;
 
-            Rect currentScanWindow = Rect.fromCenter(
-              center: size.center(const Offset(0, -60)),
-              width: scanWindowWidth,
-              height: scanWindowHeight,
-            );
-
-            return CustomBarcodeScanner(
-              key: _scannerKey,
-              showBoundingBox: true,
-              formats: _scannerFormats,
-              scanWindow: currentScanWindow,
-              detectionWarmupDelay: _introDuration,
-              loadingIcon: widget.isQRMode
-                  ? Icons.qr_code_scanner
-                  : Icons.barcode_reader,
-              onWindowScaleStart: () {
-                _controller.setBaseScanWindowSizeRatio(
-                  _controller.scanWindowSizeRatio,
+                Rect currentScanWindow = Rect.fromCenter(
+                  center: size.center(const Offset(0, -60)),
+                  width: scanWindowWidth,
+                  height: scanWindowHeight,
                 );
-              },
-              onWindowScaleUpdate: (scale) {
-                _controller.updateScanWindowSizeRatio(scale);
-              },
-              onZoomChanged: (zoomLevel) {
-                _controller.setZoom(zoomLevel);
-              },
-              onDetect: (barcodes) async {
-                if (_isCompleting || _isPickingImage) return;
-                if (barcodes.isNotEmpty && !_controller.isProcessing) {
-                  if (!_controller.isMultiScan) {
-                    final firstBarcode = barcodes.first.displayValue ?? barcodes.first.rawValue;
-                    if (firstBarcode != null) {
-                      _controller.setProcessing(true);
-                      _controller.setLatestBarcode(firstBarcode);
-                      _finishSingleScan(firstBarcode);
-                    }
-                  } else {
-                    final values = barcodes
-                        .map((b) => b.displayValue ?? b.rawValue)
-                        .where((v) => v != null)
-                        .cast<String>()
-                        .toList();
-                    bool hasChanges = _controller.processMultiScanValues(values);
 
-                    if (hasChanges) {
-                      _controller.setProcessing(true);
-                      _triggerVibration();
+                return CustomBarcodeScanner(
+                  key: _scannerKey,
+                  showBoundingBox: true,
+                  formats: _scannerFormats,
+                  scanWindow: currentScanWindow,
+                  performanceMode: widget.performanceMode,
+                  enableScanWindowCrop: widget.enableScanWindowCrop,
+                  detectionWarmupDelay: _introDuration,
+                  loadingIcon: widget.isQRMode
+                      ? Icons.qr_code_scanner
+                      : Icons.barcode_reader,
+                  onWindowScaleStart: () {
+                    _controller.setBaseScanWindowSizeRatio(
+                      _controller.scanWindowSizeRatio,
+                    );
+                  },
+                  onWindowScaleUpdate: (scale) {
+                    _controller.updateScanWindowSizeRatio(scale);
+                  },
+                  onZoomChanged: (zoomLevel) {
+                    _controller.setZoom(zoomLevel);
+                  },
+                  onDetect: (barcodes) async {
+                    if (_isCompleting || _isPickingImage) return;
+                    if (barcodes.isNotEmpty && !_controller.isProcessing) {
+                      if (!_controller.isMultiScan) {
+                        final firstBarcode =
+                            barcodes.first.displayValue ??
+                            barcodes.first.rawValue;
+                        if (firstBarcode != null) {
+                          _controller.setProcessing(true);
+                          _controller.setLatestBarcode(firstBarcode);
+                          _finishSingleScan(firstBarcode);
+                        }
+                      } else {
+                        final values = barcodes
+                            .map((b) => b.displayValue ?? b.rawValue)
+                            .where((v) => v != null)
+                            .cast<String>()
+                            .toList();
+                        bool hasChanges = _controller.processMultiScanValues(
+                          values,
+                        );
 
-                      await Future.delayed(const Duration(milliseconds: 500));
-                      if (context.mounted) {
-                        _controller.setProcessing(false);
+                        if (hasChanges) {
+                          _controller.setProcessing(true);
+                          _triggerVibration();
+
+                          await Future.delayed(
+                            const Duration(milliseconds: 500),
+                          );
+                          if (context.mounted) {
+                            _controller.setProcessing(false);
+                          }
+                        }
                       }
                     }
-                  }
-                }
-              },
-              overlayBuilder: (context, barcodes, imageSize) {
-                final finishButtonWidget =
-                    (_controller.isMultiScan &&
-                        _controller.scannedBarcodes.isNotEmpty)
-                    ? (widget.multiScanFinishButtonBuilder != null
-                          ? widget.multiScanFinishButtonBuilder!(
-                              context,
-                              _controller.scannedBarcodes.map(
-                                (k, v) => MapEntry(k, v.count),
-                              ),
-                              _finishScanning,
-                            )
-                          : Container(
-                              height: 64,
-                              margin: const EdgeInsets.symmetric(horizontal: 12),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFF10B981),
-                                    Color(0xFF047857),
-                                  ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                                borderRadius: BorderRadius.circular(32),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.35),
-                                  width: 1.5,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(
-                                      0xFF10B981,
-                                    ).withValues(alpha: 0.45),
-                                    blurRadius: 24,
-                                    spreadRadius: 2,
-                                    offset: const Offset(0, 8),
+                  },
+                  overlayBuilder: (context, barcodes, imageSize) {
+                    final finishButtonWidget =
+                        (_controller.isMultiScan &&
+                            _controller.scannedBarcodes.isNotEmpty)
+                        ? (widget.multiScanFinishButtonBuilder != null
+                              ? widget.multiScanFinishButtonBuilder!(
+                                  context,
+                                  _controller.scannedBarcodes.map(
+                                    (k, v) => MapEntry(k, v.count),
                                   ),
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.35),
-                                    blurRadius: 14,
-                                    offset: const Offset(0, 4),
+                                  _finishScanning,
+                                )
+                              : Container(
+                                  height: 64,
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [
+                                        Color(0xFF10B981),
+                                        Color(0xFF047857),
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                    borderRadius: BorderRadius.circular(32),
+                                    border: Border.all(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.35,
+                                      ),
+                                      width: 1.5,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(
+                                          0xFF10B981,
+                                        ).withValues(alpha: 0.45),
+                                        blurRadius: 24,
+                                        spreadRadius: 2,
+                                        offset: const Offset(0, 8),
+                                      ),
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.35,
+                                        ),
+                                        blurRadius: 14,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: _finishScanning,
+                                      borderRadius: BorderRadius.circular(32),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              padding: const EdgeInsets.all(10),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.2,
+                                                ),
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: const Icon(
+                                                Icons.check_rounded,
+                                                color: Colors.white,
+                                                size: 24,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 14),
+                                            const Expanded(
+                                              child: Text(
+                                                'Hoàn tất quét',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: 0.4,
+                                                ),
+                                              ),
+                                            ),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 14,
+                                                    vertical: 8,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.22,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                                border: Border.all(
+                                                  color: Colors.white
+                                                      .withValues(alpha: 0.3),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    '${_controller.scannedBarcodes.values.fold(0, (a, b) => a + b.count)} SP',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      letterSpacing: 0.2,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  const Icon(
+                                                    Icons.arrow_forward_rounded,
+                                                    color: Colors.white,
+                                                    size: 18,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ))
+                        : null;
+
+                    // Calculate highest scan window top (when scan window ratio is at max 0.9)
+                    // so that ScannerControlsRow never overlaps the scan frame even at maximum zoom/expansion!
+                    const double maxRatio = 0.9;
+                    final maxScanWindowWidth = size.width * maxRatio;
+                    final double maxRatioHeightMultiplier = widget.isQRMode
+                        ? 1.0
+                        : (0.15 + 0.35 * ((maxRatio - 0.2) / 0.7));
+                    final maxScanWindowHeight =
+                        maxScanWindowWidth * maxRatioHeightMultiplier;
+                    final highestScanWindowTop =
+                        (size.height / 2 - 60) - (maxScanWindowHeight / 2);
+
+                    final double defaultScanWindowWidth = size.width * 0.8;
+
+                    final double fixedControlsTop = math.max(
+                      68.0,
+                      highestScanWindowTop - 52.0,
+                    );
+                    final double fixedRightMargin =
+                        (size.width - defaultScanWindowWidth) / 2;
+
+                    return Stack(
+                      children: [
+                        AnimatedBuilder(
+                          animation: _cornerController,
+                          builder: (context, child) {
+                            return IgnorePointer(
+                              child: ScannerOverlay(
+                                scanWindow: currentScanWindow,
+                                borderColor: imageSize == Size.zero
+                                    ? const Color(0xFF10B981).withValues(
+                                        alpha:
+                                            0.3 +
+                                            0.7 *
+                                                ((math.sin(
+                                                          _cornerController
+                                                                  .value *
+                                                              math.pi *
+                                                              4,
+                                                        ) +
+                                                        1) /
+                                                    2),
+                                      )
+                                    : Colors.white,
+                                borderRadius: widget.isQRMode ? 20 : 8,
+                                cornerLength: 35,
+                                strokeWidth: 3,
+                                cornerOffset: Tween<double>(begin: 40, end: 0)
+                                    .animate(
+                                      CurvedAnimation(
+                                        parent: _cornerController,
+                                        curve: Curves.easeOutCubic,
+                                      ),
+                                    )
+                                    .value,
+                                overlayColor: Colors.black.withValues(
+                                  alpha: 0.65,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+
+                        ScannerTopBar(
+                          onPickImage: widget.isQRMode
+                              ? _pickImageFromGallery
+                              : null,
+                          onToggleFlash: _toggleFlash,
+                          onBack: () => _scannerKey.currentState?.pauseCamera(),
+                          isTorchOn: _isTorchOn,
+                          currentZoom: _controller.currentZoom,
+                          onZoomChanged: (val) {
+                            _controller.setZoom(val);
+                            _scannerKey.currentState?.setZoom(val);
+                          },
+                          onZoomChangeEnd: (val) {
+                            _scannerKey.currentState?.refocus();
+                          },
+                        ),
+
+                        Positioned(
+                          top: fixedControlsTop,
+                          left: 0,
+                          right: 0,
+                          child: ScannerControlsRow(
+                            currentZoom: _controller.currentZoom,
+                            rightPadding: fixedRightMargin,
+                            onZoomChanged: (val) {
+                              _controller.setZoom(val);
+                              _scannerKey.currentState?.setZoom(val);
+                            },
+                            onZoomChangeEnd: (val) {
+                              _scannerKey.currentState?.refocus();
+                            },
+                            showMultiScanToggle: widget.showMultiScanToggle,
+                            isMultiScan: _controller.isMultiScan,
+                            onMultiScanChanged: (value) {
+                              _controller.setMultiScan(value);
+                              if (value) {
+                                HapticFeedback.lightImpact();
+                              }
+                            },
+                          ),
+                        ),
+
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: SafeArea(
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  ScannerBottomSheet(
+                                    isMultiScan: _controller.isMultiScan,
+                                    isQRMode: widget.isQRMode,
+                                    scannedBarcodes: _controller.scannedBarcodes
+                                        .map((k, v) => MapEntry(k, v.count)),
+                                    latestBarcode: _controller.latestBarcode,
+                                    hasBarcodesInFrame: barcodes.isNotEmpty,
+                                    bottomWidgetBuilder:
+                                        widget.bottomWidgetBuilder,
+                                    multiScanItemBuilder:
+                                        widget.multiScanItemBuilder,
+                                    multiScanSummaryBuilder:
+                                        widget.multiScanSummaryBuilder,
+                                  ),
+                                  AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 200),
+                                    reverseDuration: const Duration(
+                                      milliseconds: 150,
+                                    ),
+                                    switchInCurve: Curves.easeOutCubic,
+                                    switchOutCurve: Curves.easeInCubic,
+                                    transitionBuilder: (child, animation) {
+                                      final slideAnimation = Tween<Offset>(
+                                        begin: const Offset(0, 0.3),
+                                        end: Offset.zero,
+                                      ).animate(animation);
+
+                                      return SlideTransition(
+                                        position: slideAnimation,
+                                        child: ScaleTransition(
+                                          scale: animation,
+                                          child: FadeTransition(
+                                            opacity: animation,
+                                            child: child,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: finishButtonWidget != null
+                                        ? Padding(
+                                            key: const ValueKey(
+                                              'finish_button_visible',
+                                            ),
+                                            padding: const EdgeInsets.only(
+                                              top: 14,
+                                            ),
+                                            child: finishButtonWidget,
+                                          )
+                                        : const SizedBox.shrink(
+                                            key: ValueKey(
+                                              'finish_button_hidden',
+                                            ),
+                                          ),
                                   ),
                                 ],
                               ),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: _finishScanning,
-                                  borderRadius: BorderRadius.circular(32),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.all(10),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white.withValues(
-                                              alpha: 0.2,
-                                            ),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.check_rounded,
-                                            color: Colors.white,
-                                            size: 24,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 14),
-                                        const Expanded(
-                                          child: Text(
-                                            'Hoàn tất quét',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: 0.4,
-                                            ),
-                                          ),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 8,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white.withValues(
-                                              alpha: 0.22,
-                                            ),
-                                            borderRadius:
-                                                BorderRadius.circular(20),
-                                            border: Border.all(
-                                              color: Colors.white.withValues(
-                                                alpha: 0.3,
-                                              ),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Text(
-                                                '${_controller.scannedBarcodes.values.fold(0, (a, b) => a + b.count)} SP',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 15,
-                                                  fontWeight: FontWeight.w700,
-                                                  letterSpacing: 0.2,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 6),
-                                              const Icon(
-                                                Icons.arrow_forward_rounded,
-                                                color: Colors.white,
-                                                size: 18,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ))
-                    : null;
-
-                // Calculate highest scan window top (when scan window ratio is at max 0.9)
-                // so that ScannerControlsRow never overlaps the scan frame even at maximum zoom/expansion!
-                const double maxRatio = 0.9;
-                final maxScanWindowWidth = size.width * maxRatio;
-                final double maxRatioHeightMultiplier = widget.isQRMode
-                    ? 1.0
-                    : (0.15 + 0.35 * ((maxRatio - 0.2) / 0.7));
-                final maxScanWindowHeight =
-                    maxScanWindowWidth * maxRatioHeightMultiplier;
-                final highestScanWindowTop =
-                    (size.height / 2 - 60) - (maxScanWindowHeight / 2);
-
-                final double defaultScanWindowWidth = size.width * 0.8;
-
-                final double fixedControlsTop =
-                    math.max(68.0, highestScanWindowTop - 52.0);
-                final double fixedRightMargin =
-                    (size.width - defaultScanWindowWidth) / 2;
-
-                return Stack(
-                  children: [
-                    AnimatedBuilder(
-                      animation: _cornerController,
-                      builder: (context, child) {
-                        return IgnorePointer(
-                          child: ScannerOverlay(
-                            scanWindow: currentScanWindow,
-                            borderColor: imageSize == Size.zero
-                                ? const Color(0xFF10B981).withValues(
-                                    alpha:
-                                        0.3 +
-                                        0.7 *
-                                            ((math.sin(
-                                                      _cornerController.value *
-                                                          math.pi *
-                                                          4,
-                                                    ) +
-                                                    1) /
-                                                2),
-                                  )
-                                : Colors.white,
-                            borderRadius: widget.isQRMode ? 20 : 8,
-                            cornerLength: 35,
-                            strokeWidth: 3,
-                            cornerOffset: Tween<double>(begin: 40, end: 0)
-                                .animate(CurvedAnimation(
-                                  parent: _cornerController,
-                                  curve: Curves.easeOutCubic,
-                                ))
-                                .value,
-                            overlayColor: Colors.black.withValues(alpha: 0.65),
-                          ),
-                        );
-                      },
-                    ),
-
-                    ScannerTopBar(
-                      onPickImage: _pickImageFromGallery,
-                      onToggleFlash: _toggleFlash,
-                      onBack: () => _scannerKey.currentState?.pauseCamera(),
-                      isTorchOn: _isTorchOn,
-                      currentZoom: _controller.currentZoom,
-                      onZoomChanged: (val) {
-                        _controller.setZoom(val);
-                        _scannerKey.currentState?.setZoom(val);
-                      },
-                      onZoomChangeEnd: (val) {
-                        _scannerKey.currentState?.refocus();
-                      },
-                    ),
-
-                    Positioned(
-                      top: fixedControlsTop,
-                      left: 0,
-                      right: 0,
-                      child: ScannerControlsRow(
-                        currentZoom: _controller.currentZoom,
-                        rightPadding: fixedRightMargin,
-                        onZoomChanged: (val) {
-                          _controller.setZoom(val);
-                          _scannerKey.currentState?.setZoom(val);
-                        },
-                        onZoomChangeEnd: (val) {
-                          _scannerKey.currentState?.refocus();
-                        },
-                        showMultiScanToggle: widget.showMultiScanToggle,
-                        isMultiScan: _controller.isMultiScan,
-                        onMultiScanChanged: (value) {
-                          _controller.setMultiScan(value);
-                          if (value) {
-                            HapticFeedback.lightImpact();
-                          }
-                        },
-                      ),
-                    ),
-
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ScannerBottomSheet(
-                                isMultiScan: _controller.isMultiScan,
-                                isQRMode: widget.isQRMode,
-                                scannedBarcodes: _controller.scannedBarcodes
-                                    .map((k, v) => MapEntry(k, v.count)),
-                                latestBarcode: _controller.latestBarcode,
-                                hasBarcodesInFrame: barcodes.isNotEmpty,
-                                bottomWidgetBuilder: widget.bottomWidgetBuilder,
-                                multiScanItemBuilder:
-                                    widget.multiScanItemBuilder,
-                                multiScanSummaryBuilder:
-                                    widget.multiScanSummaryBuilder,
-                              ),
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 200),
-                                reverseDuration: const Duration(milliseconds: 150),
-                                switchInCurve: Curves.easeOutCubic,
-                                switchOutCurve: Curves.easeInCubic,
-                                transitionBuilder: (child, animation) {
-                                  final slideAnimation = Tween<Offset>(
-                                    begin: const Offset(0, 0.3),
-                                    end: Offset.zero,
-                                  ).animate(animation);
-
-                                  return SlideTransition(
-                                    position: slideAnimation,
-                                    child: ScaleTransition(
-                                      scale: animation,
-                                      child: FadeTransition(
-                                        opacity: animation,
-                                        child: child,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                child: finishButtonWidget != null
-                                    ? Padding(
-                                        key: const ValueKey('finish_button_visible'),
-                                        padding: const EdgeInsets.only(top: 14),
-                                        child: finishButtonWidget,
-                                      )
-                                    : const SizedBox.shrink(
-                                        key: ValueKey('finish_button_hidden'),
-                                      ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-                    ),
 
-                    if (_isCompleting)
-                      Positioned.fill(
-                        child: _CompletionOverlay(
-                          title: _controller.isMultiScan
-                              ? 'Quét hoàn tất!'
-                              : 'Quét thành công!',
-                          itemCount: _controller.isMultiScan
-                              ? _controller.scannedBarcodes.values
-                                  .fold<int>(0, (a, b) => a + b.count)
-                              : null,
-                          subtitle: _completionSubtitle,
-                        ),
-                      ),
-                  ],
+                        if (_isCompleting)
+                          Positioned.fill(
+                            child: _CompletionOverlay(
+                              title: _controller.isMultiScan
+                                  ? 'Quét hoàn tất!'
+                                  : 'Quét thành công!',
+                              itemCount: _controller.isMultiScan
+                                  ? _controller.scannedBarcodes.values
+                                        .fold<int>(0, (a, b) => a + b.count)
+                                  : null,
+                              subtitle: _completionSubtitle,
+                            ),
+                          ),
+                      ],
+                    );
+                  },
                 );
               },
-            );
-          },
-        ),
+            ),
+          ),
+          // Loading overlay on top of everything
+          _buildLoadingOverlay(),
+        ],
       ),
-      // Loading overlay on top of everything
-      _buildLoadingOverlay(),
-      ],
-    ),
-  );
+    );
   }
 }
 
@@ -945,10 +983,7 @@ class _ScanLinePainter extends CustomPainter {
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [
-          color.withValues(alpha: 0.0),
-          color.withValues(alpha: 0.18),
-        ],
+        colors: [color.withValues(alpha: 0.0), color.withValues(alpha: 0.18)],
       ).createShader(glowRect);
     canvas.drawRect(glowRect, glowPaint);
 
@@ -997,10 +1032,7 @@ class _CompletionOverlayState extends State<_CompletionOverlay>
     )..forward();
 
     _scaleAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _animController,
-        curve: Curves.elasticOut,
-      ),
+      CurvedAnimation(parent: _animController, curve: Curves.elasticOut),
     );
 
     _fadeAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -1057,14 +1089,13 @@ class _CompletionOverlayState extends State<_CompletionOverlay>
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           gradient: const LinearGradient(
-                            colors: [
-                              Color(0xFF10B981),
-                              Color(0xFF059669),
-                            ],
+                            colors: [Color(0xFF10B981), Color(0xFF059669)],
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF10B981).withValues(alpha: 0.6),
+                              color: const Color(
+                                0xFF10B981,
+                              ).withValues(alpha: 0.6),
                               blurRadius: 20,
                               offset: const Offset(0, 4),
                             ),

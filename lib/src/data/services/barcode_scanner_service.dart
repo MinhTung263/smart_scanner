@@ -225,14 +225,15 @@ class BarcodeScannerService {
   /// whatever ML Kit returns for the cropped image, so all downstream code
   /// keeps working with full-frame-relative coordinates unaware cropping ever
   /// happened.
-  ({
+  @visibleForTesting
+  static ({
     int cropLeft,
     int cropTop,
     int cropWidth,
     int cropHeight,
     Offset mlkitOffset,
   })?
-  _computeCropRegion({
+  computeCropRegion({
     required Rect scanWindow,
     required Size screenSize,
     required Size previewSize,
@@ -486,10 +487,10 @@ class BarcodeScannerService {
       );
 
       // Try to crop down to (a padded margin around) the visible scan window
-      // before handing frames to ML Kit — see _computeCropRegion for why.
+      // before handing frames to ML Kit — see computeCropRegion for why.
       _lastCropOffset = null;
       if (scanWindow != null && screenSize != null) {
-        final cropRegion = _computeCropRegion(
+        final cropRegion = computeCropRegion(
           scanWindow: scanWindow,
           screenSize: screenSize,
           previewSize: Size(width.toDouble(), height.toDouble()),
@@ -553,7 +554,7 @@ class BarcodeScannerService {
   ///
   /// [scanWindow] and [screenSize], when provided, let this crop the frame
   /// down to roughly the visible scan window before decoding (Android only;
-  /// see _computeCropRegion). Returned barcodes are always translated back to
+  /// see computeCropRegion). Returned barcodes are always translated back to
   /// full-frame-relative coordinates, so callers don't need to know whether
   /// cropping happened.
   Future<
