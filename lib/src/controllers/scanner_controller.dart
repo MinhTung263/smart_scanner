@@ -8,7 +8,7 @@ class ScannerController extends ChangeNotifier {
 
   double _currentZoom = 1.0;
   bool _isProcessing = false;
-  bool _isMultiScan = false;
+  bool _isMultiScan;
   String _latestBarcode = 'Chưa quét được mã vạch';
   double _scanWindowSizeRatio = 0.8;
   double _baseScanWindowSizeRatio = 0.8;
@@ -16,8 +16,11 @@ class ScannerController extends ChangeNotifier {
   Map<String, ScannedBarcode> _scannedBarcodes = {};
   Set<String> _previousVisibleBarcodes = {};
 
-  ScannerController({BarcodeProcessorUseCase? barcodeProcessor})
-    : _barcodeProcessor = barcodeProcessor ?? const BarcodeProcessorUseCase();
+  ScannerController({
+    bool isMultiScan = false,
+    BarcodeProcessorUseCase? barcodeProcessor,
+  }) : _isMultiScan = isMultiScan,
+       _barcodeProcessor = barcodeProcessor ?? const BarcodeProcessorUseCase();
 
   double get currentZoom => _currentZoom;
   bool get isProcessing => _isProcessing;
