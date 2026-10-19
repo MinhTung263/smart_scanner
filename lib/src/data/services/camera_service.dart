@@ -8,9 +8,9 @@ class CameraService {
   // Global lock to prevent overlapping camera lifecycles on rapid screen transitions
   static Future<void>? _globalDisposeFuture;
 
-  // Default zoom on open, to help resolve small/dense barcodes without giving up
-  // the fast 720p startup path. Clamped to the device's actual zoom range below.
-  static const double defaultZoomLevel = 1.5;
+  // Open at the camera's natural 1x view. This is clamped to the device's
+  // actual zoom range below for cameras whose minimum zoom is greater than 1x.
+  static const double defaultZoomLevel = 1.0;
 
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;

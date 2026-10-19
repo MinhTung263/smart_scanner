@@ -139,9 +139,11 @@ class ScannerTopBar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   onTap: () {
                     final double nextZoom;
-                    if (zoomVal < 1.8) {
+                    if (zoomVal < 1.25) {
+                      nextZoom = 1.5;
+                    } else if (zoomVal < 1.75) {
                       nextZoom = 2.0;
-                    } else if (zoomVal < 2.8) {
+                    } else if (zoomVal < 2.5) {
                       nextZoom = 3.0;
                     } else {
                       nextZoom = 1.0;

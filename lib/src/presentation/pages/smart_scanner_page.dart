@@ -39,6 +39,37 @@ Future<List<String>> _decodeGalleryBarcodes((String, int) request) async {
 
 enum _GalleryStatus { idle, selecting, analyzing }
 
+const double _scanWindowExtraWidth = 10.0;
+const double _scanWindowHeightScale = 1.5;
+const double _scanWindowVerticalOffset = -60.0;
+
+@visibleForTesting
+Rect calculateScanWindow({
+  required Size screenSize,
+  required double sizeRatio,
+  required bool isQRMode,
+}) {
+  final double originalWidth = screenSize.width * sizeRatio;
+  final double width = (originalWidth + _scanWindowExtraWidth).clamp(
+    0.0,
+    screenSize.width,
+  );
+  final double heightMultiplier = isQRMode
+      ? 1.0
+      : (0.15 + 0.35 * ((sizeRatio - 0.2) / 0.7));
+  final double originalHeight = originalWidth * heightMultiplier;
+  final double height = (originalHeight * _scanWindowHeightScale).clamp(
+    0.0,
+    screenSize.height,
+  );
+
+  return Rect.fromCenter(
+    center: screenSize.center(const Offset(0, _scanWindowVerticalOffset)),
+    width: width,
+    height: height,
+  );
+}
+
 class SmartScannerScreen extends StatefulWidget {
   final bool isQRMode;
   final bool isMultiScan;
@@ -535,19 +566,10 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
         child: AnimatedBuilder(
           animation: _controller,
           builder: (context, child) {
-            final scanWindowWidth =
-                size.width * _controller.scanWindowSizeRatio;
-
-            final double heightMultiplier = widget.isQRMode
-                ? 1.0
-                : (0.15 +
-                      0.35 * ((_controller.scanWindowSizeRatio - 0.2) / 0.7));
-            final scanWindowHeight = scanWindowWidth * heightMultiplier;
-
-            Rect currentScanWindow = Rect.fromCenter(
-              center: size.center(const Offset(0, -60)),
-              width: scanWindowWidth,
-              height: scanWindowHeight,
+            final currentScanWindow = calculateScanWindow(
+              screenSize: size,
+              sizeRatio: _controller.scanWindowSizeRatio,
+              isQRMode: widget.isQRMode,
             );
 
             return CustomBarcodeScanner(
@@ -732,16 +754,18 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                 // Calculate highest scan window top (when scan window ratio is at max 0.9)
                 // so that ScannerControlsRow never overlaps the scan frame even at maximum zoom/expansion!
                 const double maxRatio = 0.9;
-                final maxScanWindowWidth = size.width * maxRatio;
-                final double maxRatioHeightMultiplier = widget.isQRMode
-                    ? 1.0
-                    : (0.15 + 0.35 * ((maxRatio - 0.2) / 0.7));
-                final maxScanWindowHeight =
-                    maxScanWindowWidth * maxRatioHeightMultiplier;
-                final highestScanWindowTop =
-                    (size.height / 2 - 60) - (maxScanWindowHeight / 2);
+                final maxScanWindow = calculateScanWindow(
+                  screenSize: size,
+                  sizeRatio: maxRatio,
+                  isQRMode: widget.isQRMode,
+                );
+                final highestScanWindowTop = maxScanWindow.top;
 
-                final double defaultScanWindowWidth = size.width * 0.8;
+                final defaultScanWindowWidth = calculateScanWindow(
+                  screenSize: size,
+                  sizeRatio: 0.8,
+                  isQRMode: widget.isQRMode,
+                ).width;
 
                 final double fixedControlsTop =
                     math.max(68.0, highestScanWindowTop - 52.0);
