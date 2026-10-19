@@ -213,7 +213,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
             Format.codabar;
 
   Future<void> _pickImageFromGallery() async {
-    if (_isPickingImage || _isCompleting) return;
+    if (!widget.isQRMode || _isPickingImage || _isCompleting) return;
 
     // Show the loading overlay in 'selecting' state immediately — before the gallery opens
     setState(() => _galleryStatus = _GalleryStatus.selecting);
@@ -786,7 +786,9 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                     ),
 
                     ScannerTopBar(
-                      onPickImage: _pickImageFromGallery,
+                      onPickImage: widget.isQRMode
+                          ? _pickImageFromGallery
+                          : null,
                       onToggleFlash: _toggleFlash,
                       onBack: () => _scannerKey.currentState?.pauseCamera(),
                       isTorchOn: _isTorchOn,
