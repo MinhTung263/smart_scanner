@@ -3,6 +3,8 @@ import 'package:smart_scanner/smart_scanner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Warm up camera subsystem in background so the first scan is instantaneous
+  SmartScanner.warmUp();
   runApp(const MyApp());
 }
 

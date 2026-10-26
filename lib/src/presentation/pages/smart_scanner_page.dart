@@ -131,7 +131,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   // Shared by the corner guide-frame entrance animation and the detection
   // warmup gate below, so a barcode already in frame on open can't be
   // accepted before the guide frame has visibly arrived.
-  static const _introDuration = Duration(milliseconds: 650);
+  static const _introDuration = Duration(milliseconds: 300);
 
   late AnimationController _cornerController;
   late AnimationController _loadingController;

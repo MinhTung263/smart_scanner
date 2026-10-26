@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 class CameraService {
@@ -38,13 +39,17 @@ class CameraService {
       _cameraIndex >= 0 && _cameras.isNotEmpty ? _cameras[_cameraIndex] : null;
 
   static List<CameraDescription>? _cachedCameras;
+  static Future<void>? _preloadFuture;
 
-  static Future<void> preloadCameras() async {
-    if (_cachedCameras == null || _cachedCameras!.isEmpty) {
+  static Future<void> preloadCameras() {
+    if (_cachedCameras != null && _cachedCameras!.isNotEmpty) {
+      return Future.value();
+    }
+    return _preloadFuture ??= () async {
       try {
         _cachedCameras = await availableCameras();
       } catch (_) {}
-    }
+    }();
   }
 
   /// Initializes the camera and starts the live feed.
@@ -69,11 +74,20 @@ class CameraService {
       if (_cachedCameras != null && _cachedCameras!.isNotEmpty) {
         _cameras = _cachedCameras!;
       } else {
-        try {
-          _cameras = await availableCameras();
-          _cachedCameras = _cameras;
-        } catch (e) {
-          return 'Lỗi truy cập camera: $e';
+        if (_preloadFuture != null) {
+          try {
+            await _preloadFuture;
+          } catch (_) {}
+        }
+        if (_cachedCameras != null && _cachedCameras!.isNotEmpty) {
+          _cameras = _cachedCameras!;
+        } else {
+          try {
+            _cameras = await availableCameras();
+            _cachedCameras = _cameras;
+          } catch (e) {
+            return 'Lỗi truy cập camera: $e';
+          }
         }
       }
     }
@@ -92,8 +106,14 @@ class CameraService {
     }
     if (_cameraIndex == -1) _cameraIndex = 0;
 
+    int frameCount = 0;
     return await _startLiveFeed(
-      onImageStream,
+      (image) {
+        if (frameCount++ == 0 && kDebugMode) {
+          debugPrint('[CameraInit] first CameraImage received: ${sw.elapsedMilliseconds}ms');
+        }
+        onImageStream(image);
+      },
       isDisposedCheck,
       onUpdateUI,
       onZoomInitialized,
@@ -109,6 +129,14 @@ class CameraService {
     Stopwatch? sw,
   ]) async {
     if (isDisposedCheck()) return null;
+
+    void lap(String stage) {
+      if (kDebugMode && sw != null) {
+        debugPrint('[CameraInit] $stage: ${sw.elapsedMilliseconds}ms');
+      }
+    }
+
+    lap('cameras ready');
 
     final camera = _cameras[_cameraIndex];
     String? errorMsg;
@@ -134,6 +162,7 @@ class CameraService {
     try {
       _initializeControllerFuture = controller.initialize();
       await _initializeControllerFuture;
+      lap('controller.initialize');
 
       // If stopLiveFeed was called during initialization (e.g., app went to background for permission dialog),
       // _controller will be null. We must abort to prevent using a disposed controller.
@@ -148,16 +177,21 @@ class CameraService {
       minZoomLevel = zoomLevels[0];
       final nativeMax = zoomLevels[1];
       maxZoomLevel = nativeMax > 3.0 ? 3.0 : nativeMax;
+      lap('zoom limits');
 
       if (isDisposedCheck() || _controller != controller) {
         return null;
       }
 
-      await _ensureContinuousAutofocus(controller);
-      await _applyDefaultZoom(controller, onZoomInitialized);
+      await Future.wait([
+        _ensureContinuousAutofocus(controller),
+        _applyDefaultZoom(controller, onZoomInitialized),
+      ]);
+      lap('focus + zoom');
 
       if (isDisposedCheck() || _controller != controller) return null;
       await controller.startImageStream(onImageStream);
+      lap('startImageStream');
       onUpdateUI();
     } on CameraException catch (e) {
       // Fallback if NV21 is not supported on this Android device
@@ -232,14 +266,20 @@ class CameraService {
 
       if (isDisposedCheck() || _controller != controller) return null;
 
-      minZoomLevel = await controller.getMinZoomLevel();
-      final nativeMax = await controller.getMaxZoomLevel();
+      final zoomLevels = await Future.wait([
+        controller.getMinZoomLevel(),
+        controller.getMaxZoomLevel(),
+      ]);
+      minZoomLevel = zoomLevels[0];
+      final nativeMax = zoomLevels[1];
       maxZoomLevel = nativeMax > 3.0 ? 3.0 : nativeMax;
 
       if (isDisposedCheck() || _controller != controller) return null;
 
-      await _ensureContinuousAutofocus(controller);
-      await _applyDefaultZoom(controller, onZoomInitialized);
+      await Future.wait([
+        _ensureContinuousAutofocus(controller),
+        _applyDefaultZoom(controller, onZoomInitialized),
+      ]);
 
       if (isDisposedCheck() || _controller != controller) return null;
       await controller.startImageStream(onImageStream);
@@ -258,7 +298,11 @@ class CameraService {
   ) async {
     final zoom = defaultZoomLevel.clamp(minZoomLevel, maxZoomLevel);
     try {
-      await controller.setZoomLevel(zoom);
+      // A freshly created controller already starts at 1x, so skip the
+      // native call in that case and only report the level to the UI.
+      if (zoom != 1.0) {
+        await controller.setZoomLevel(zoom);
+      }
       onZoomInitialized?.call(zoom);
     } catch (e) {}
   }
@@ -324,6 +368,8 @@ class CameraService {
         // Calling dispose() while initialize() is still running natively will permanently freeze Android cameras.
         try {
           await initFuture;
+          // Yield a microtask turn so any pending listeners on CameraController settle
+          await Future.delayed(Duration.zero);
         } catch (_) {
           // Failed initialization still owns native resources that need disposal.
         }
@@ -338,7 +384,9 @@ class CameraService {
       }
       if (cameraController != null) {
         // Do NOT use timeout. Bypassing this will cause native crash.
-        await cameraController.dispose();
+        try {
+          await cameraController.dispose();
+        } catch (_) {}
       }
     } catch (e) {
     } finally {
