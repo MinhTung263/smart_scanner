@@ -1,0 +1,8 @@
+
+# FVM Version Cache
+.fvm/
+# Dart / Flutter generated
+.dart_tool/
+.flutter-plugins-dependencies
+pubspec.lock
+.vscode/
