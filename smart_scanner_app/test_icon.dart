@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 void main() {
-  print(Icons.barcode_reader);
+  debugPrint(Icons.barcode_reader.toString());
 }

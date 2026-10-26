@@ -5,6 +5,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 
+/// Result of decoding one camera frame plus the motion/quality flags measured
+/// on it.
+typedef _FrameResult = (
+  List<Barcode> barcodes,
+  bool justSettled,
+  bool isMoving,
+  bool isBlurry,
+  bool hasGlare,
+);
+
 class BarcodeScannerService {
   BarcodeScanner? _barcodeScanner;
 
@@ -35,7 +45,7 @@ class BarcodeScannerService {
   // Reused across frames when a frame has to be repacked (YUV_420_888 fallback).
   Uint8List? _nv21Scratch;
   bool _closed = false;
-  Future<(List<Barcode>, bool, bool, bool, bool)>? _processing;
+  Future<_FrameResult>? _processing;
   List<BarcodeFormat>? _pendingFormats;
 
   // --- Camera motion detection (for refocus-on-settle and the adaptive
@@ -123,7 +133,7 @@ class BarcodeScannerService {
   }
 
   // --- Sharpness estimation (for the "you're too close, back away a bit"
-  // hint — the phone's lens has a minimum focus distance no amount of
+  // hint â€” the phone's lens has a minimum focus distance no amount of
   // autofocus retriggering can overcome once crossed). ---
   static const int _sharpnessSampleStride =
       47; // sparse sampling keeps this cheap
@@ -163,13 +173,13 @@ class BarcodeScannerService {
       samples++;
     }
 
-    if (samples == 0) return false; // not enough data — don't false-flag blur
+    if (samples == 0) return false; // not enough data â€” don't false-flag blur
     final double avgGradient = totalGradient / samples;
     return avgGradient < _blurySharpnessThreshold;
   }
 
   // --- Glare estimation (backing away or changing angle reduces a specular
-  // reflection's share of the frame and often clears it entirely — same
+  // reflection's share of the frame and often clears it entirely â€” same
   // "back away" remedy as the blur hint, different cause). ---
   static const int _glareSampleStep =
       5; // denser than motion/sharpness sampling: glare can be a small hotspot
@@ -180,7 +190,7 @@ class BarcodeScannerService {
   /// Fraction of a sparse sample of the Y-plane that's blown-out bright, as a
   /// cheap proxy for "is there a specular reflection hot enough to wash out
   /// part of the frame". A glare edge is still a sharp edge, so this needs to
-  /// be checked independently of the blur/sharpness estimate above — a glared
+  /// be checked independently of the blur/sharpness estimate above â€” a glared
   /// frame can look perfectly "sharp" by that metric while still failing to
   /// decode.
   bool _estimateHasGlare(
@@ -213,7 +223,7 @@ class BarcodeScannerService {
   // Feeding ML Kit only the (padded) visible scan window instead of the full
   // frame both cuts decode time (less data) and effectively magnifies small
   // barcodes within the analyzed region. This only handles the back-camera,
-  // 90deg/270deg sensor rotation cases — the only ones this portrait-only
+  // 90deg/270deg sensor rotation cases â€” the only ones this portrait-only
   // scanner UI targets and the only ones verified against the existing
   // screen-mapping code in this file. Any other case safely falls back to
   // processing the full, uncropped frame.
@@ -486,7 +496,7 @@ class BarcodeScannerService {
       );
 
       // Try to crop down to (a padded margin around) the visible scan window
-      // before handing frames to ML Kit — see _computeCropRegion for why.
+      // before handing frames to ML Kit â€” see _computeCropRegion for why.
       _lastCropOffset = null;
       if (scanWindow != null && screenSize != null) {
         final cropRegion = _computeCropRegion(
@@ -547,7 +557,7 @@ class BarcodeScannerService {
   ///   focus distance (a hardware limit no amount of autofocus retriggering
   ///   can overcome).
   /// - [hasGlare] reflects a bright specular reflection washing out part of
-  ///   the frame — a different failure mode than blur (a glare edge is still
+  ///   the frame â€” a different failure mode than blur (a glare edge is still
   ///   a sharp edge), but the same remedy applies: backing away or changing
   ///   the scan angle reduces or clears it.
   ///
@@ -587,7 +597,7 @@ class BarcodeScannerService {
     }
   }
 
-  Future<(List<Barcode>, bool, bool, bool, bool)> _processCameraImage(
+  Future<_FrameResult> _processCameraImage(
     CameraImage image,
     CameraDescription camera, {
     Rect? scanWindow,
@@ -702,7 +712,7 @@ class BarcodeScannerService {
         return !inside;
       });
 
-      // The 20% padding is meant to forgive imprecision for a single code —
+      // The 20% padding is meant to forgive imprecision for a single code â€”
       // but with several codes packed close together (e.g. adjacent barcodes
       // on the same label), that same padding makes it easy to accidentally
       // pick up a neighbor instead of the one actually centered. When more
@@ -759,15 +769,15 @@ class BarcodeScannerService {
 }
 
 /// Returns [image] as one tightly packed NV21 buffer (full-res Y plane, then
-/// interleaved VU at quarter resolution) — the only byte layout ML Kit takes
-/// on Android — or null if the frame can't be converted. `repacked` tells
+/// interleaved VU at quarter resolution) â€” the only byte layout ML Kit takes
+/// on Android â€” or null if the frame can't be converted. `repacked` tells
 /// whether the bytes were copied into a buffer of our own (worth reusing as
 /// the next [scratch]) rather than being the camera's own memory.
 ///
 /// With `ImageFormatGroup.nv21` the camera plugin already packs frames
 /// natively, so they're passed through without copying (just trimmed when the
 /// plugin's buffer has trailing bytes from a padded Y plane). Only the
-/// YUV_420_888 fallback — separate, possibly padded planes — is repacked,
+/// YUV_420_888 fallback â€” separate, possibly padded planes â€” is repacked,
 /// into [scratch] when it's the right size.
 @visibleForTesting
 ({Uint8List bytes, bool repacked})? cameraImageToNv21(

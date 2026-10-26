@@ -7,6 +7,7 @@ class BarcodeProcessorUseCase {
 
   /// Processes newly detected barcodes against the existing list of scanned barcodes.
   /// Returns a map of the updated scanned barcodes and a boolean indicating if there was any change.
+  /// Duplicate values within the same frame are counted only once.
   (Map<String, ScannedBarcode>, bool) processMultiScan(
     List<String> newBarcodes,
     Map<String, ScannedBarcode> existingBarcodes,
@@ -14,26 +15,26 @@ class BarcodeProcessorUseCase {
   ) {
     bool hasNewOrIncremented = false;
     final Map<String, ScannedBarcode> updatedBarcodes = Map.from(existingBarcodes);
+    final now = DateTime.now();
 
-    for (var val in newBarcodes) {
-      if (!updatedBarcodes.containsKey(val)) {
+    for (final val in newBarcodes.toSet()) {
+      final existingItem = updatedBarcodes[val];
+      if (existingItem == null) {
         updatedBarcodes[val] = ScannedBarcode(
           value: val,
           count: 1,
-          lastIncrementTime: DateTime.now(),
+          lastIncrementTime: now,
         );
         hasNewOrIncremented = true;
       } else {
-        final existingItem = updatedBarcodes[val]!;
-        final bool timeThresholdMet = DateTime.now()
-                .difference(existingItem.lastIncrementTime)
-                .inMilliseconds >
+        final bool timeThresholdMet =
+            now.difference(existingItem.lastIncrementTime).inMilliseconds >
             debounceMilliseconds;
 
         if (!previousVisibleBarcodes.contains(val) || timeThresholdMet) {
           updatedBarcodes[val] = existingItem.copyWith(
             count: existingItem.count + 1,
-            lastIncrementTime: DateTime.now(),
+            lastIncrementTime: now,
           );
           hasNewOrIncremented = true;
         }
