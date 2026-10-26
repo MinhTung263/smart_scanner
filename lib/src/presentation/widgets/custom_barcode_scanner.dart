@@ -28,12 +28,13 @@ class CustomBarcodeScanner extends StatefulWidget {
   final void Function()? onWindowScaleStart;
   final void Function(double scale)? onWindowScaleUpdate;
   final void Function(double zoomLevel)? onZoomChanged;
+  final ScannerPerformanceMode performanceMode;
+  final bool enableScanWindowCrop;
 
   /// Barcodes found before this delay (measured from when the scanner first
   /// mounts) are ignored, so a code already in frame doesn't get accepted
   /// while the entrance UI (e.g. the guide frame animation) is still settling.
   final Duration detectionWarmupDelay;
-  final ScannerPerformanceMode performanceMode;
 
   const CustomBarcodeScanner({
     Key? key,
@@ -47,8 +48,9 @@ class CustomBarcodeScanner extends StatefulWidget {
     this.onWindowScaleStart,
     this.onWindowScaleUpdate,
     this.onZoomChanged,
+    this.performanceMode = ScannerPerformanceMode.adaptive,
+    this.enableScanWindowCrop = true,
     this.detectionWarmupDelay = Duration.zero,
-    this.performanceMode = ScannerPerformanceMode.auto,
   }) : super(key: key);
 
   @override
@@ -71,6 +73,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   Future<void>? _initializing;
   final Stopwatch _clock = Stopwatch()..start();
   int _nextProcessTime = 0;
+  late ScannerPerformancePolicy _performancePolicy;
   double _currentZoom = 1.0;
   String? _cameraError;
   // Permission errors can't be fixed by retrying in-app — the error view
@@ -81,15 +84,12 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   // just inactive — which is all a system permission prompt causes.
   bool _wasInBackground = false;
   List<Barcode> _recognizedBarcodes = [];
+  String? _recognizedBarcodeSignature;
   late final int _detectionReadyAtMs;
 
-  // Preview remains fluid; decoding needs a much smaller frame budget.
-  // Slow devices also get a rest period proportional to the last decode time.
-  // Each decode is a full-frame ML Kit pass plus a frame copy to native, so
-  // this rate is the main CPU/heat knob. At 5/sec a code held in frame is
-  // still picked up within ~200ms.
-  static const int _activeThrottleMs = 200; // at most 5 decodes/sec
-  static const int _idleThrottleMs = 500;
+  // Preview remains fluid while the policy controls the smaller decode budget.
+  // Adaptive mode learns from actual ML Kit duration, so weak POS hardware
+  // gets longer rests and fast phones retain low scan latency.
   static const int _idleGraceMs =
       1500; // how long without activity before backing off
   static const int _autoPauseTimeoutMs = 60000; // Auto-pause after 60s idle
@@ -180,6 +180,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
         _clock.elapsedMilliseconds + widget.detectionWarmupDelay.inMilliseconds;
 
     _cameraService = CameraService();
+    _performancePolicy = ScannerPerformancePolicy(widget.performanceMode);
     _barcodeScannerService = BarcodeScannerService(formats: widget.formats);
 
     _pulseController = AnimationController(
@@ -203,6 +204,38 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
 
   bool get _canScan =>
       mounted && !_isDisposed && !_isPaused && !_isAutoPaused && _isAppActive;
+
+  String _visualSignature(List<Barcode> barcodes) {
+    // ML Kit bounding boxes can jitter by a few sensor pixels even when the
+    // code is stationary. Quantizing them prevents those tiny differences
+    // from rebuilding and repainting the overlay every decoded frame.
+    const double bucketSize = 6.0;
+    int bucket(double value) => (value / bucketSize).round();
+
+    final signatures = barcodes.map((barcode) {
+      final rect = barcode.boundingBox;
+      final value = barcode.rawValue ?? barcode.displayValue ?? '';
+      return '${value.length}:$value|${barcode.format}|'
+          '${bucket(rect.left)},${bucket(rect.top)},'
+          '${bucket(rect.right)},${bucket(rect.bottom)}';
+    }).toList()..sort();
+
+    return signatures.join('|');
+  }
+
+  void _startOverlayFeedback({required bool fromHidden}) {
+    if (fromHidden) {
+      _lockController.forward(from: 0.0);
+    } else {
+      _lockController.forward();
+    }
+
+    if (widget.performanceMode.usesContinuousOverlayPulse) {
+      _pulseController.repeat(reverse: true);
+    } else {
+      _pulseController.stop();
+    }
+  }
 
   Future<void> _initializeCamera() async {
     if (!_canScan) return;
@@ -231,7 +264,6 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       isDisposedCheck: () => !_canScan,
       onUpdateUI: _handleCameraUpdateUI,
       onZoomInitialized: _handleZoomInitialized,
-      performanceMode: widget.performanceMode,
     );
     if (!mounted || _isDisposed) return;
     final permissionDenied =
@@ -373,6 +405,17 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   @override
   void didUpdateWidget(CustomBarcodeScanner oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.performanceMode != widget.performanceMode) {
+      _performancePolicy = ScannerPerformancePolicy(widget.performanceMode);
+      _nextProcessTime = 0;
+      if (_recognizedBarcodes.isNotEmpty) {
+        if (widget.performanceMode.usesContinuousOverlayPulse) {
+          _pulseController.repeat(reverse: true);
+        } else {
+          _pulseController.stop();
+        }
+      }
+    }
     if (!listEquals(oldWidget.formats, widget.formats)) {
       _barcodeScannerService.updateFormats(widget.formats);
     }
@@ -419,16 +462,11 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     final int now = _clock.elapsedMilliseconds;
     if (now < _detectionReadyAtMs || now < _nextProcessTime) return;
     final bool idle = (now - _lastActivityAtMs) > _idleGraceMs;
-    final int throttleMs = idle ? _idleThrottleMs : _activeThrottleMs;
     final session = _session;
     _isBusy = true;
     try {
-      final screenSize = MediaQuery.of(context).size;
-
-      // NOTE: crop-to-scan-window is temporarily disabled (not passing
-      // scanWindow/screenSize here falls back to full-frame decoding) while we
-      // isolate a reported bounding-box distortion — see processCameraImage's
-      // crop path in barcode_scanner_service.dart.
+      final screenSize = context.size ?? MediaQuery.of(context).size;
+      final cropWindow = widget.enableScanWindowCrop ? widget.scanWindow : null;
       final (
         barcodes,
         justSettled,
@@ -438,6 +476,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       ) = await _barcodeScannerService.processCameraImage(
         image,
         _cameraService.currentCamera!,
+        scanWindow: cropWindow,
+        screenSize: cropWindow == null ? null : screenSize,
       );
 
       if (!_canScan || session != _session) return;
@@ -482,20 +522,26 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                   widget.scanWindow,
                 );
 
-            if (_recognizedBarcodes.isEmpty && filteredBarcodes.isNotEmpty) {
-              _clearBarcodesTimer?.cancel();
-              _clearBarcodesTimer = null;
-              _lockController.forward(from: 0.0);
-              _pulseController.repeat(reverse: true);
-            }
-
             if (filteredBarcodes.isNotEmpty) {
+              final wasHidden = _recognizedBarcodes.isEmpty;
+              final wasClearing = _clearBarcodesTimer?.isActive ?? false;
               _clearBarcodesTimer?.cancel();
               _clearBarcodesTimer = null;
-              setState(() {
-                _recognizedBarcodes = filteredBarcodes;
-              });
+              if (wasHidden || wasClearing) {
+                _startOverlayFeedback(fromHidden: wasHidden);
+              }
 
+              final signature = _visualSignature(filteredBarcodes);
+              if (signature != _recognizedBarcodeSignature) {
+                setState(() {
+                  _recognizedBarcodes = filteredBarcodes;
+                  _recognizedBarcodeSignature = signature;
+                });
+              }
+
+              // Keep delivering detections: multi-scan debounce/counting is a
+              // domain concern and must continue even when the visual overlay
+              // is unchanged.
               widget.onDetect(filteredBarcodes);
             } else if (_recognizedBarcodes.isNotEmpty) {
               // Barcodes lost: play reverse exit animation (fade-out & scale-out) smoothly back to hidden state
@@ -509,6 +555,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                       _pulseController.stop();
                       setState(() {
                         _recognizedBarcodes = [];
+                        _recognizedBarcodeSignature = null;
                       });
                     }
                   },
@@ -530,12 +577,18 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     } finally {
       final finished = _clock.elapsedMilliseconds;
       final elapsed = finished - now;
+      _performancePolicy.recordDecode(Duration(milliseconds: elapsed));
+      final nextThrottleMs = _performancePolicy
+          .interval(idle: idle)
+          .inMilliseconds;
       // Never immediately re-run a slow decoder; allow time for rendering
       // and cap sustained decoder duty to roughly 50% on slower devices.
       _nextProcessTime =
-          finished + (elapsed > throttleMs ~/ 2 ? elapsed : throttleMs ~/ 2);
-      if (_nextProcessTime < now + throttleMs)
-        _nextProcessTime = now + throttleMs;
+          finished +
+          (elapsed > nextThrottleMs ~/ 2 ? elapsed : nextThrottleMs ~/ 2);
+      if (_nextProcessTime < now + nextThrottleMs) {
+        _nextProcessTime = now + nextThrottleMs;
+      }
       _isBusy = false;
     }
   }
@@ -580,6 +633,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     if (_isDisposed || !mounted) return;
     _isPaused = false;
     _recognizedBarcodes = [];
+    _recognizedBarcodeSignature = null;
     _lastActivityAtMs = _lastUserActivityMs = _clock.elapsedMilliseconds;
     await _initializeCamera();
   }
@@ -752,9 +806,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                   imageSize: previewSize,
                   screenSize: size,
                   color: widget.boundingBoxColor,
-                  pulseValue: _pulseController.value,
+                  pulseValue: widget.performanceMode.usesContinuousOverlayPulse
+                      ? _pulseController.value
+                      : 0.0,
                   lockValue: _lockController.value,
                   zoomLevel: _currentZoom,
+                  useRichEffects: widget.performanceMode.usesRichOverlayEffects,
+                  showLabels: widget.performanceMode.showsOverlayLabels,
                 ),
               );
             },

@@ -10,7 +10,6 @@ import 'package:flutter_zxing/flutter_zxing.dart'
 import '../../smart_scanner.dart';
 
 import '../../controllers/scanner_controller.dart';
-import '../../domain/entities/scanner_performance_mode.dart';
 import '../widgets/custom_barcode_scanner.dart';
 import '../widgets/scanner_overlay.dart';
 import '../widgets/scanner_controls.dart';
@@ -46,7 +45,6 @@ class SmartScannerScreen extends StatefulWidget {
 
   /// Opens the screen with multi-scan already enabled.
   final bool initialMultiScan;
-  final ScannerPerformanceMode performanceMode;
 
   /// Whether the phone vibrates when a code is scanned (single scan, each new
   /// code in multi-scan, and finishing a multi-scan). `null` follows the
@@ -54,6 +52,8 @@ class SmartScannerScreen extends StatefulWidget {
   /// scanner's own buttons are unaffected; they follow the system's touch
   /// feedback setting.
   final bool? enableVibration;
+  final ScannerPerformanceMode performanceMode;
+  final bool enableScanWindowCrop;
   final Widget Function(BuildContext context, String barcode)?
   bottomWidgetBuilder;
   final Widget Function(BuildContext context, String barcode)?
@@ -76,8 +76,9 @@ class SmartScannerScreen extends StatefulWidget {
     this.isQRMode = false,
     this.showMultiScanToggle = true,
     this.initialMultiScan = false,
-    this.performanceMode = ScannerPerformanceMode.auto,
     this.enableVibration,
+    this.performanceMode = ScannerPerformanceMode.adaptive,
+    this.enableScanWindowCrop = true,
     this.bottomWidgetBuilder,
     this.multiScanItemBuilder,
     this.multiScanSummaryBuilder,
@@ -218,7 +219,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
             Format.codabar;
 
   Future<void> _pickImageFromGallery() async {
-    if (_isPickingImage || _isCompleting) return;
+    if (!widget.isQRMode || _isPickingImage || _isCompleting) return;
 
     // Show the loading overlay in 'selecting' state immediately — before the gallery opens
     setState(() => _galleryStatus = _GalleryStatus.selecting);
@@ -560,8 +561,9 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                   showBoundingBox: true,
                   formats: _scannerFormats,
                   scanWindow: currentScanWindow,
-                  detectionWarmupDelay: _introDuration,
                   performanceMode: widget.performanceMode,
+                  enableScanWindowCrop: widget.enableScanWindowCrop,
+                  detectionWarmupDelay: _introDuration,
                   loadingIcon: widget.isQRMode
                       ? Icons.qr_code_scanner
                       : Icons.barcode_reader,
@@ -812,7 +814,9 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                         ),
 
                         ScannerTopBar(
-                          onPickImage: _pickImageFromGallery,
+                          onPickImage: widget.isQRMode
+                              ? _pickImageFromGallery
+                              : null,
                           onToggleFlash: _toggleFlash,
                           onBack: () => _scannerKey.currentState?.pauseCamera(),
                           isTorchOn: _isTorchOn,

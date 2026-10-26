@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../domain/entities/scanner_performance_mode.dart';
+
+import '../../domain/entities/scanner_camera_frame_rate.dart';
 
 class CameraService {
   // Global lock to prevent overlapping camera lifecycles on rapid screen transitions
@@ -13,50 +13,12 @@ class CameraService {
   // Default zoom on open, to help resolve small/dense barcodes without giving up
   // the fast 720p startup path. Clamped to the device's actual zoom range below.
   static const double defaultZoomLevel = 1.5;
-  static const int _lowMemoryBytes = 3 * 1024 * 1024 * 1024;
 
-  static Future<ResolutionPreset> _resolveResolutionPreset(
-    ScannerPerformanceMode mode,
-  ) async {
-    if (mode == ScannerPerformanceMode.balanced) {
-      return ResolutionPreset.medium;
-    }
-    if (mode == ScannerPerformanceMode.quality) {
-      return ResolutionPreset.high;
-    }
+  CameraService({
+    this.frameRate = ScannerCameraFrameRate.platformDefault,
+  });
 
-    try {
-      final deviceInfo = DeviceInfoPlugin();
-      if (Platform.isAndroid) {
-        final info = await deviceInfo.androidInfo;
-        final manufacturer = info.manufacturer.toLowerCase();
-        final model = info.model.toLowerCase();
-        final isPos = [
-          'sunmi',
-          'zebra',
-          'honeywell',
-          'datalogic',
-          'chainway',
-        ].any((name) => manufacturer.contains(name) || model.contains(name));
-        final isLowMemory = info.physicalRamSize <= _lowMemoryBytes;
-        return isPos || isLowMemory
-            ? ResolutionPreset.medium
-            : ResolutionPreset.high;
-      }
-
-      if (Platform.isIOS) {
-        final info = await deviceInfo.iosInfo;
-        return info.physicalRamSize <= _lowMemoryBytes
-            ? ResolutionPreset.medium
-            : ResolutionPreset.high;
-      }
-    } catch (_) {
-      // Device profiling is only a performance hint; keep the existing default
-      // if a platform does not expose the required information.
-    }
-
-    return ResolutionPreset.high;
-  }
+  final ScannerCameraFrameRate frameRate;
 
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;
@@ -101,9 +63,7 @@ class CameraService {
     required bool Function() isDisposedCheck,
     required VoidCallback onUpdateUI,
     void Function(double zoom)? onZoomInitialized,
-    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.auto,
   }) async {
-    final sw = Stopwatch()..start();
     _isPermissionDenied = false;
 
     // Wait for any previous camera instance to finish disposing before starting a new one
@@ -140,14 +100,38 @@ class CameraService {
     }
     if (_cameraIndex == -1) _cameraIndex = 0;
 
-    return await _startLiveFeed(
+    final defaultFps = ScannerCameraFrameRate.platformDefault.resolve(
+      isIOS: Platform.isIOS,
+    );
+    final requestedFps = frameRate.resolve(isIOS: Platform.isIOS);
+    var error = await _startLiveFeed(
       onImageStream,
       isDisposedCheck,
       onUpdateUI,
       onZoomInitialized,
-      performanceMode,
-      sw,
+      requestedFps,
     );
+
+    // CameraX requests an exact [fps, fps] range. Some devices reject 60 FPS
+    // for the selected resolution/use-case combination even when another
+    // camera format supports it, so reopen at the known-safe platform default.
+    if (error != null &&
+        !_isPermissionDenied &&
+        requestedFps != defaultFps &&
+        !isDisposedCheck()) {
+      await stopLiveFeed();
+      if (isDisposedCheck()) return null;
+      error = await _startLiveFeed(
+        onImageStream,
+        isDisposedCheck,
+        onUpdateUI,
+        onZoomInitialized,
+        defaultFps,
+      );
+    }
+
+    if (error != null) onUpdateUI();
+    return error;
   }
 
   Future<String?> _startLiveFeed(
@@ -155,27 +139,20 @@ class CameraService {
     bool Function() isDisposedCheck,
     VoidCallback onUpdateUI, [
     void Function(double zoom)? onZoomInitialized,
-    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.auto,
-    Stopwatch? sw,
+    int fps = 30,
   ]) async {
     if (isDisposedCheck()) return null;
 
     final camera = _cameras[_cameraIndex];
-    final resolutionPreset = await _resolveResolutionPreset(performanceMode);
     String? errorMsg;
 
     final controller = CameraController(
       camera,
       // Keep the existing ~720p preset for small labels. Bound capture FPS
       // separately from the lower decoder rate to reduce camera/ISP load.
-      resolutionPreset,
+      ResolutionPreset.high,
       enableAudio: false,
-      // camera_avfoundation copies every captured frame (~3.7 MB of BGRA at
-      // 720p) over to Dart regardless of how many we actually decode, so the
-      // capture rate itself is a steady CPU/heat cost on iOS. Android stays at
-      // 30: CameraX applies this as a fixed [fps, fps] range, and a fixed 24
-      // range isn't guaranteed to be supported on every device.
-      fps: Platform.isIOS ? 24 : 30,
+      fps: fps,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21
           : ImageFormatGroup.bgra8888, // MUST be bgra8888 on iOS for ML Kit
@@ -222,7 +199,7 @@ class CameraService {
           isDisposedCheck,
           onUpdateUI,
           onZoomInitialized,
-          performanceMode,
+          fps,
         );
       }
 
@@ -262,19 +239,19 @@ class CameraService {
     bool Function() isDisposedCheck,
     VoidCallback onUpdateUI, [
     void Function(double zoom)? onZoomInitialized,
-    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.auto,
+    int fps = 30,
   ]) async {
     if (isDisposedCheck()) return null;
 
     final camera = _cameras[_cameraIndex];
-    final resolutionPreset = await _resolveResolutionPreset(performanceMode);
     String? errorMsg;
 
     final controller = CameraController(
       camera,
-      resolutionPreset,
+      ResolutionPreset
+          .high, // 720p: Optimal balance of sharpness and thermal efficiency
       enableAudio: false,
-      fps: 30,
+      fps: fps,
       imageFormatGroup:
           ImageFormatGroup.yuv420, // Must be yuv420 as this is the fallback
     );
