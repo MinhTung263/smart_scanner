@@ -4,6 +4,7 @@ import 'data/services/camera_service.dart';
 import 'presentation/pages/smart_scanner_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'domain/entities/smart_scanner_result.dart';
+import 'domain/entities/scanner_performance_mode.dart';
 
 export 'domain/entities/smart_scanner_result.dart';
 
@@ -86,6 +87,7 @@ class SmartScanner {
     bool isQRMode = false,
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.auto,
     bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
@@ -108,6 +110,7 @@ class SmartScanner {
           isQRMode: isQRMode,
           showMultiScanToggle: showMultiScanToggle,
           initialMultiScan: initialMultiScan,
+          performanceMode: performanceMode,
           enableVibration: enableVibration,
           bottomWidgetBuilder:
               bottomWidgetBuilder ??
@@ -311,6 +314,7 @@ class SmartScanner {
     BuildContext context, {
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.auto,
     bool? enableVibration,
   }) {
     return scan(
@@ -318,6 +322,7 @@ class SmartScanner {
       isQRMode: true,
       showMultiScanToggle: showMultiScanToggle,
       initialMultiScan: initialMultiScan,
+      performanceMode: performanceMode,
       enableVibration: enableVibration,
     );
   }
@@ -327,6 +332,7 @@ class SmartScanner {
     BuildContext context, {
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.auto,
     bool? enableVibration,
   }) {
     return scan(
@@ -334,6 +340,7 @@ class SmartScanner {
       isQRMode: false,
       showMultiScanToggle: showMultiScanToggle,
       initialMultiScan: initialMultiScan,
+      performanceMode: performanceMode,
       enableVibration: enableVibration,
     );
   }
@@ -345,6 +352,7 @@ class SmartScanner {
     bool isQRMode = false,
     bool showMultiScanToggle = true,
     bool initialMultiScan = false,
+    ScannerPerformanceMode performanceMode = ScannerPerformanceMode.auto,
     bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
@@ -363,6 +371,7 @@ class SmartScanner {
           isQRMode: isQRMode,
           showMultiScanToggle: showMultiScanToggle,
           initialMultiScan: initialMultiScan,
+          performanceMode: performanceMode,
           enableVibration: enableVibration,
           bottomWidgetBuilder: bottomWidgetBuilder,
           multiScanItemBuilder: multiScanItemBuilder,

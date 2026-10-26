@@ -1,6 +1,7 @@
 library smart_scanner;
 
 export 'src/smart_scanner.dart';
+export 'src/domain/entities/scanner_performance_mode.dart';
 export 'src/presentation/widgets/vibration_switch.dart';
 export 'src/presentation/widgets/custom_barcode_scanner.dart';
 export 'src/presentation/widgets/barcode_overlay_painter.dart';

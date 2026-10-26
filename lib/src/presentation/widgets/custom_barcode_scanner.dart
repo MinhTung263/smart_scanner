@@ -8,6 +8,7 @@ import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart
 
 import '../../data/services/barcode_scanner_service.dart';
 import '../../data/services/camera_service.dart';
+import '../../domain/entities/scanner_performance_mode.dart';
 import 'barcode_overlay_painter.dart';
 import 'glass_container.dart';
 
@@ -32,6 +33,7 @@ class CustomBarcodeScanner extends StatefulWidget {
   /// mounts) are ignored, so a code already in frame doesn't get accepted
   /// while the entrance UI (e.g. the guide frame animation) is still settling.
   final Duration detectionWarmupDelay;
+  final ScannerPerformanceMode performanceMode;
 
   const CustomBarcodeScanner({
     Key? key,
@@ -46,6 +48,7 @@ class CustomBarcodeScanner extends StatefulWidget {
     this.onWindowScaleUpdate,
     this.onZoomChanged,
     this.detectionWarmupDelay = Duration.zero,
+    this.performanceMode = ScannerPerformanceMode.auto,
   }) : super(key: key);
 
   @override
@@ -228,6 +231,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       isDisposedCheck: () => !_canScan,
       onUpdateUI: _handleCameraUpdateUI,
       onZoomInitialized: _handleZoomInitialized,
+      performanceMode: widget.performanceMode,
     );
     if (!mounted || _isDisposed) return;
     final permissionDenied =
@@ -387,7 +391,9 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       // invisible, auto-denying prompt that resumes the app again — an
       // endless loop that keeps the scanner stuck on its loading state. Only
       // retry after a real trip away from the app, e.g. to Settings.
-      if (_cameraError != null && _cameraErrorIsPermission && !wasInBackground) {
+      if (_cameraError != null &&
+          _cameraErrorIsPermission &&
+          !wasInBackground) {
         return;
       }
       if (_canScan) {
@@ -401,7 +407,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       }
       _isAppActive = false;
       _session++;
-        _pulseController.stop();
+      _pulseController.stop();
       _cameraAlive.value = false;
       _cameraService.stopLiveFeed(onUpdateUI: _handleCameraUpdateUI);
     }
@@ -656,9 +662,15 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                     final controller = _cameraService.controller;
                     if (controller != null) {
                       final double baseZoom = CameraService.defaultZoomLevel
-                          .clamp(_cameraService.minZoomLevel, _cameraService.maxZoomLevel);
-                      final bool isAtBase = (_currentZoom - baseZoom).abs() < 0.05;
-                      _currentZoom = isAtBase ? _cameraService.maxZoomLevel : baseZoom;
+                          .clamp(
+                            _cameraService.minZoomLevel,
+                            _cameraService.maxZoomLevel,
+                          );
+                      final bool isAtBase =
+                          (_currentZoom - baseZoom).abs() < 0.05;
+                      _currentZoom = isAtBase
+                          ? _cameraService.maxZoomLevel
+                          : baseZoom;
                       controller.setZoomLevel(_currentZoom);
                       _cameraService.handleScaleStart(_currentZoom);
                       if (widget.onZoomChanged != null)
@@ -689,11 +701,14 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                           builder: (context, alive, _) {
                             // An outgoing switcher child must never revive its
                             // old controller when a new camera becomes ready.
-                            if (!alive || !_canScan ||
+                            if (!alive ||
+                                !_canScan ||
                                 _cameraService.controller != controller) {
                               return const SizedBox.shrink();
                             }
-                            return RepaintBoundary(child: CameraPreview(controller));
+                            return RepaintBoundary(
+                              child: CameraPreview(controller),
+                            );
                           },
                         ),
                       ),
@@ -761,7 +776,10 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                   opacity: _showBackAwayHint ? 1.0 : 0.0,
                   duration: const Duration(milliseconds: 250),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withAlpha(180),
                       borderRadius: BorderRadius.circular(20),
@@ -799,9 +817,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
 
         if (_isAutoPaused)
           Positioned.fill(
-            child: _AutoPauseOverlay(
-              onResume: _resumeFromAutoPause,
-            ),
+            child: _AutoPauseOverlay(onResume: _resumeFromAutoPause),
           ),
       ],
     );
@@ -869,10 +885,9 @@ class _CameraErrorView extends StatelessWidget {
                         shape: BoxShape.circle,
                         color: const Color(0xFF1F2937),
                         border: Border.all(
-                          color: (isPermissionDenied
-                                  ? _accent
-                                  : Colors.redAccent)
-                              .withValues(alpha: 0.6),
+                          color:
+                              (isPermissionDenied ? _accent : Colors.redAccent)
+                                  .withValues(alpha: 0.6),
                           width: 2,
                         ),
                       ),
@@ -998,7 +1013,9 @@ class _FocusIndicatorState extends State<_FocusIndicator>
       builder: (context, child) {
         final double t = _controller.value.clamp(0.0, 1.0);
         final double scale = 1.35 - 0.35 * Curves.easeOut.transform(t);
-        final double opacity = t < 0.55 ? 1.0 : (1.0 - (t - 0.55) / 0.45).clamp(0.0, 1.0);
+        final double opacity = t < 0.55
+            ? 1.0
+            : (1.0 - (t - 0.55) / 0.45).clamp(0.0, 1.0);
         return Opacity(
           opacity: opacity,
           child: Transform.scale(
@@ -1183,12 +1200,16 @@ class _AutoPauseOverlayState extends State<_AutoPauseOverlay>
                                   height: 110,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    color: const Color(0xFF10B981)
-                                        .withValues(alpha: _pulseAnimation.value * 0.3),
+                                    color: const Color(0xFF10B981).withValues(
+                                      alpha: _pulseAnimation.value * 0.3,
+                                    ),
                                     boxShadow: [
                                       BoxShadow(
                                         color: const Color(0xFF10B981)
-                                            .withValues(alpha: _pulseAnimation.value * 0.5),
+                                            .withValues(
+                                              alpha:
+                                                  _pulseAnimation.value * 0.5,
+                                            ),
                                         blurRadius: 30,
                                         spreadRadius: 10,
                                       ),
@@ -1203,13 +1224,16 @@ class _AutoPauseOverlayState extends State<_AutoPauseOverlay>
                                     shape: BoxShape.circle,
                                     color: const Color(0xFF1F2937),
                                     border: Border.all(
-                                      color: const Color(0xFF10B981)
-                                          .withValues(alpha: 0.6),
+                                      color: const Color(
+                                        0xFF10B981,
+                                      ).withValues(alpha: 0.6),
                                       width: 2,
                                     ),
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withValues(alpha: 0.4),
+                                        color: Colors.black.withValues(
+                                          alpha: 0.4,
+                                        ),
                                         blurRadius: 12,
                                         offset: const Offset(0, 4),
                                       ),
