@@ -71,6 +71,7 @@ class SmartScanner {
   ///
   /// If [isQRMode] is true, the scanner will only look for QR codes.
   /// Otherwise, it will look for traditional 1D barcodes.
+  /// If [isMultiScan] is true, the scanner starts in continuous scanning mode.
   ///
   /// Vibration on a successful scan follows the app-wide [vibrateOnScan];
   /// pass [enableVibration] to force it on or off for this scan only.
@@ -80,6 +81,7 @@ class SmartScanner {
   static Future<SmartScannerResult?> scan(
     BuildContext context, {
     bool isQRMode = false,
+    bool isMultiScan = false,
     bool showMultiScanToggle = true,
     bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
@@ -101,6 +103,7 @@ class SmartScanner {
       MaterialPageRoute(
         builder: (context) => SmartScannerScreen(
           isQRMode: isQRMode,
+          isMultiScan: isMultiScan,
           showMultiScanToggle: showMultiScanToggle,
           enableVibration: enableVibration,
           bottomWidgetBuilder:
@@ -303,12 +306,14 @@ class SmartScanner {
   /// Convenience method to easily scan only QR codes with the beautiful UI.
   static Future<SmartScannerResult?> scanQR(
     BuildContext context, {
+    bool isMultiScan = false,
     bool showMultiScanToggle = true,
     bool? enableVibration,
   }) {
     return scan(
       context,
       isQRMode: true,
+      isMultiScan: isMultiScan,
       showMultiScanToggle: showMultiScanToggle,
       enableVibration: enableVibration,
     );
@@ -317,12 +322,14 @@ class SmartScanner {
   /// Convenience method to easily scan only Barcodes with the beautiful UI.
   static Future<SmartScannerResult?> scanBarcode(
     BuildContext context, {
+    bool isMultiScan = false,
     bool showMultiScanToggle = true,
     bool? enableVibration,
   }) {
     return scan(
       context,
       isQRMode: false,
+      isMultiScan: isMultiScan,
       showMultiScanToggle: showMultiScanToggle,
       enableVibration: enableVibration,
     );
@@ -333,6 +340,7 @@ class SmartScanner {
   static Future<SmartScannerResult?> scanBasic(
     BuildContext context, {
     bool isQRMode = false,
+    bool isMultiScan = false,
     bool showMultiScanToggle = true,
     bool? enableVibration,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
@@ -350,6 +358,7 @@ class SmartScanner {
       MaterialPageRoute(
         builder: (context) => SmartScannerScreen(
           isQRMode: isQRMode,
+          isMultiScan: isMultiScan,
           showMultiScanToggle: showMultiScanToggle,
           enableVibration: enableVibration,
           bottomWidgetBuilder: bottomWidgetBuilder,

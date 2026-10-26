@@ -162,6 +162,27 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: _buildActionCard(
+                      title: 'Quét nhiều',
+                      subtitle: 'Mở thẳng chế độ quét liên tục',
+                      icon: Icons.inventory_2_outlined,
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF10B981), Color(0xFF059669)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      onTap: () async {
+                        final result = await SmartScanner.scanBarcode(
+                          context,
+                          isMultiScan: true,
+                        );
+                        _handleScanResult(result);
+                      },
+                    ),
+                  ),
                   const SizedBox(height: 32),
                   const Text(
                     'Cài đặt',

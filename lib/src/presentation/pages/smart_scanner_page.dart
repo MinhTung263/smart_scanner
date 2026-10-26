@@ -39,8 +39,52 @@ Future<List<String>> _decodeGalleryBarcodes((String, int) request) async {
 
 enum _GalleryStatus { idle, selecting, analyzing }
 
+const double _scanWindowExtraWidth = 10.0;
+const double _scanWindowHeightScale = 1.5;
+const double _scanWindowVerticalOffset = -60.0;
+
+@visibleForTesting
+Rect calculateScanWindow({
+  required Size screenSize,
+  required double sizeRatio,
+  required bool isQRMode,
+}) {
+  final bool isLandscape = screenSize.width > screenSize.height;
+  final double sizingWidth = isLandscape && isQRMode
+      ? screenSize.height
+      : screenSize.width;
+  final double originalWidth = sizingWidth * sizeRatio;
+  final double maxWidth = isLandscape
+      ? screenSize.width * 0.92
+      : screenSize.width;
+  final double width = (originalWidth + _scanWindowExtraWidth).clamp(
+    0.0,
+    maxWidth,
+  );
+  final double heightMultiplier = isQRMode
+      ? 1.0
+      : (0.15 + 0.35 * ((sizeRatio - 0.2) / 0.7));
+  final double originalHeight = originalWidth * heightMultiplier;
+  final double maxHeight = isLandscape
+      ? screenSize.height * (isQRMode ? 0.75 : 0.65)
+      : screenSize.height;
+  final double height = (originalHeight * _scanWindowHeightScale).clamp(
+    0.0,
+    maxHeight,
+  );
+
+  return Rect.fromCenter(
+    center: screenSize.center(
+      Offset(0, isLandscape ? 0 : _scanWindowVerticalOffset),
+    ),
+    width: width,
+    height: height,
+  );
+}
+
 class SmartScannerScreen extends StatefulWidget {
   final bool isQRMode;
+  final bool isMultiScan;
   final bool showMultiScanToggle;
 
   /// Whether the phone vibrates when a code is scanned (single scan, each new
@@ -69,6 +113,7 @@ class SmartScannerScreen extends StatefulWidget {
   const SmartScannerScreen({
     super.key,
     this.isQRMode = false,
+    this.isMultiScan = false,
     this.showMultiScanToggle = true,
     this.enableVibration,
     this.bottomWidgetBuilder,
@@ -112,12 +157,9 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
   @override
   void initState() {
     super.initState();
-    // The camera preview, guide frame and ML Kit rotation handling all assume
-    // portrait, so lock the screen for as long as the scanner is open.
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     // Read now so the saved setting has loaded by the time a code is scanned.
     _vibrateOnScan = SmartScanner.vibrateOnScan;
-    _controller = ScannerController();
+    _controller = ScannerController(isMultiScan: widget.isMultiScan);
 
     _cornerController = AnimationController(
       vsync: this,
@@ -132,9 +174,6 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
 
   @override
   void dispose() {
-    // An empty list hands orientation back to the host app's own settings
-    // (Info.plist / AndroidManifest) once the scanner closes.
-    SystemChrome.setPreferredOrientations([]);
     _cornerController.dispose();
     _loadingController.dispose();
     _controller.dispose();
@@ -211,7 +250,7 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
             Format.codabar;
 
   Future<void> _pickImageFromGallery() async {
-    if (_isPickingImage || _isCompleting) return;
+    if (!widget.isQRMode || _isPickingImage || _isCompleting) return;
 
     // Show the loading overlay in 'selecting' state immediately — before the gallery opens
     setState(() => _galleryStatus = _GalleryStatus.selecting);
@@ -533,19 +572,10 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
         child: AnimatedBuilder(
           animation: _controller,
           builder: (context, child) {
-            final scanWindowWidth =
-                size.width * _controller.scanWindowSizeRatio;
-
-            final double heightMultiplier = widget.isQRMode
-                ? 1.0
-                : (0.15 +
-                      0.35 * ((_controller.scanWindowSizeRatio - 0.2) / 0.7));
-            final scanWindowHeight = scanWindowWidth * heightMultiplier;
-
-            Rect currentScanWindow = Rect.fromCenter(
-              center: size.center(const Offset(0, -60)),
-              width: scanWindowWidth,
-              height: scanWindowHeight,
+            final currentScanWindow = calculateScanWindow(
+              screenSize: size,
+              sizeRatio: _controller.scanWindowSizeRatio,
+              isQRMode: widget.isQRMode,
             );
 
             return CustomBarcodeScanner(
@@ -730,16 +760,18 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                 // Calculate highest scan window top (when scan window ratio is at max 0.9)
                 // so that ScannerControlsRow never overlaps the scan frame even at maximum zoom/expansion!
                 const double maxRatio = 0.9;
-                final maxScanWindowWidth = size.width * maxRatio;
-                final double maxRatioHeightMultiplier = widget.isQRMode
-                    ? 1.0
-                    : (0.15 + 0.35 * ((maxRatio - 0.2) / 0.7));
-                final maxScanWindowHeight =
-                    maxScanWindowWidth * maxRatioHeightMultiplier;
-                final highestScanWindowTop =
-                    (size.height / 2 - 60) - (maxScanWindowHeight / 2);
+                final maxScanWindow = calculateScanWindow(
+                  screenSize: size,
+                  sizeRatio: maxRatio,
+                  isQRMode: widget.isQRMode,
+                );
+                final highestScanWindowTop = maxScanWindow.top;
 
-                final double defaultScanWindowWidth = size.width * 0.8;
+                final defaultScanWindowWidth = calculateScanWindow(
+                  screenSize: size,
+                  sizeRatio: 0.8,
+                  isQRMode: widget.isQRMode,
+                ).width;
 
                 final double fixedControlsTop =
                     math.max(68.0, highestScanWindowTop - 52.0);
@@ -784,7 +816,9 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                     ),
 
                     ScannerTopBar(
-                      onPickImage: _pickImageFromGallery,
+                      onPickImage: widget.isQRMode
+                          ? _pickImageFromGallery
+                          : null,
                       onToggleFlash: _toggleFlash,
                       onBack: () => _scannerKey.currentState?.pauseCamera(),
                       isTorchOn: _isTorchOn,

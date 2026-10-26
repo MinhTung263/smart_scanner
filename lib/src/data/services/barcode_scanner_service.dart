@@ -3,6 +3,7 @@ import 'dart:math' show Point, max;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 
 /// Result of decoding one camera frame plus the motion/quality flags measured
@@ -16,6 +17,32 @@ typedef _FrameResult = (
 );
 
 class BarcodeScannerService {
+  static const Map<DeviceOrientation, int> _orientationDegrees = {
+    DeviceOrientation.portraitUp: 0,
+    DeviceOrientation.landscapeLeft: 90,
+    DeviceOrientation.portraitDown: 180,
+    DeviceOrientation.landscapeRight: 270,
+  };
+
+  @visibleForTesting
+  static InputImageRotation? inputImageRotation({
+    required int sensorOrientation,
+    required CameraLensDirection lensDirection,
+    required DeviceOrientation deviceOrientation,
+    required bool isIOS,
+  }) {
+    if (isIOS) {
+      return InputImageRotationValue.fromRawValue(sensorOrientation);
+    }
+
+    var rotationCompensation = _orientationDegrees[deviceOrientation];
+    if (rotationCompensation == null) return null;
+    rotationCompensation = lensDirection == CameraLensDirection.front
+        ? (sensorOrientation + rotationCompensation) % 360
+        : (sensorOrientation - rotationCompensation + 360) % 360;
+    return InputImageRotationValue.fromRawValue(rotationCompensation);
+  }
+
   BarcodeScanner? _barcodeScanner;
 
   BarcodeScannerService({
@@ -222,11 +249,8 @@ class BarcodeScannerService {
   // --- Crop-to-scan-window (Android/NV21 only) ---
   // Feeding ML Kit only the (padded) visible scan window instead of the full
   // frame both cuts decode time (less data) and effectively magnifies small
-  // barcodes within the analyzed region. This only handles the back-camera,
-  // 90deg/270deg sensor rotation cases â€” the only ones this portrait-only
-  // scanner UI targets and the only ones verified against the existing
-  // screen-mapping code in this file. Any other case safely falls back to
-  // processing the full, uncropped frame.
+  // barcodes within the analyzed region. This handles all four rotations for
+  // the back camera, so the same crop path works in portrait and landscape.
   Uint8List? _reusableCropBuffer;
   Offset? _lastCropOffset;
 
@@ -250,17 +274,15 @@ class BarcodeScannerService {
     required CameraLensDirection lensDirection,
   }) {
     if (lensDirection != CameraLensDirection.back) return null;
-    if (rotation != InputImageRotation.rotation90deg &&
-        rotation != InputImageRotation.rotation270deg) {
-      return null;
-    }
     if (screenSize.width <= 0 || screenSize.height <= 0) return null;
 
-    final bool isPortrait = screenSize.height > screenSize.width;
-    final double mlkitWidth = isPortrait
+    final bool swapsAxes =
+        rotation == InputImageRotation.rotation90deg ||
+        rotation == InputImageRotation.rotation270deg;
+    final double mlkitWidth = swapsAxes
         ? previewSize.height
         : previewSize.width;
-    final double mlkitHeight = isPortrait
+    final double mlkitHeight = swapsAxes
         ? previewSize.width
         : previewSize.height;
 
@@ -294,20 +316,36 @@ class BarcodeScannerService {
     final double rawH = previewSize.height;
 
     // Convert the ML-Kit/rotated-space rect into raw sensor-space pixel
-    // bounds, inverting whichever 90deg rotation ML Kit was told to apply.
+    // bounds, inverting the rotation ML Kit was told to apply.
     double rawLeft, rawTop, rawRight, rawBottom;
-    if (rotation == InputImageRotation.rotation90deg) {
-      // Forward: rotated = (H-1-raw.y, raw.x). Inverse: raw.x = rotated.y; raw.y = H-1-rotated.x.
-      rawLeft = mlTop;
-      rawRight = mlBottom;
-      rawTop = rawH - mlRight;
-      rawBottom = rawH - mlLeft;
-    } else {
-      // rotation270deg. Forward: rotated = (raw.y, W-1-raw.x). Inverse: raw.x = W-1-rotated.y; raw.y = rotated.x.
-      rawLeft = rawW - mlBottom;
-      rawRight = rawW - mlTop;
-      rawTop = mlLeft;
-      rawBottom = mlRight;
+    switch (rotation) {
+      case InputImageRotation.rotation0deg:
+        rawLeft = mlLeft;
+        rawTop = mlTop;
+        rawRight = mlRight;
+        rawBottom = mlBottom;
+        break;
+      case InputImageRotation.rotation90deg:
+        // Forward: rotated = (H-1-raw.y, raw.x).
+        rawLeft = mlTop;
+        rawRight = mlBottom;
+        rawTop = rawH - mlRight;
+        rawBottom = rawH - mlLeft;
+        break;
+      case InputImageRotation.rotation180deg:
+        // Forward: rotated = (W-1-raw.x, H-1-raw.y).
+        rawLeft = rawW - mlRight;
+        rawRight = rawW - mlLeft;
+        rawTop = rawH - mlBottom;
+        rawBottom = rawH - mlTop;
+        break;
+      case InputImageRotation.rotation270deg:
+        // Forward: rotated = (raw.y, W-1-raw.x).
+        rawLeft = rawW - mlBottom;
+        rawRight = rawW - mlTop;
+        rawTop = mlLeft;
+        rawBottom = mlRight;
+        break;
     }
 
     int cropLeft = rawLeft.floor();
@@ -333,9 +371,24 @@ class BarcodeScannerService {
     // Re-derive the ML-Kit-space offset from the FINAL (rounded/clamped) raw
     // crop bounds, via the forward rotation, so the translate-back step is
     // exactly consistent with the bytes actually sliced out below.
-    final Offset mlkitOffset = rotation == InputImageRotation.rotation90deg
-        ? Offset(rawH - cropBottom, cropLeft.toDouble())
-        : Offset(cropTop.toDouble(), rawW - cropRight);
+    final Offset mlkitOffset = switch (rotation) {
+      InputImageRotation.rotation0deg => Offset(
+        cropLeft.toDouble(),
+        cropTop.toDouble(),
+      ),
+      InputImageRotation.rotation90deg => Offset(
+        rawH - cropBottom,
+        cropLeft.toDouble(),
+      ),
+      InputImageRotation.rotation180deg => Offset(
+        rawW - cropRight,
+        rawH - cropBottom,
+      ),
+      InputImageRotation.rotation270deg => Offset(
+        cropTop.toDouble(),
+        rawW - cropRight,
+      ),
+    };
 
     return (
       cropLeft: cropLeft,
@@ -409,24 +462,18 @@ class BarcodeScannerService {
   Future<InputImage?> _inputImageFromCameraImage(
     CameraImage image,
     CameraDescription camera, {
+    required DeviceOrientation deviceOrientation,
     Rect? scanWindow,
     Size? screenSize,
   }) async {
     _lastCropOffset = null;
     final sensorOrientation = camera.sensorOrientation;
-    InputImageRotation? rotation;
-    if (Platform.isIOS) {
-      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
-    } else if (Platform.isAndroid) {
-      var rotationCompensation = 0;
-      if (camera.lensDirection == CameraLensDirection.front) {
-        rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
-      } else {
-        rotationCompensation =
-            (sensorOrientation - rotationCompensation + 360) % 360;
-      }
-      rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
-    }
+    final rotation = inputImageRotation(
+      sensorOrientation: sensorOrientation,
+      lensDirection: camera.lensDirection,
+      deviceOrientation: deviceOrientation,
+      isIOS: Platform.isIOS,
+    );
 
     if (rotation == null) return null;
     if (image.planes.isEmpty) return null;
@@ -578,6 +625,7 @@ class BarcodeScannerService {
   processCameraImage(
     CameraImage image,
     CameraDescription camera, {
+    required DeviceOrientation deviceOrientation,
     Rect? scanWindow,
     Size? screenSize,
   }) async {
@@ -587,6 +635,7 @@ class BarcodeScannerService {
       final future = _processCameraImage(
         image,
         camera,
+        deviceOrientation: deviceOrientation,
         scanWindow: scanWindow,
         screenSize: screenSize,
       );
@@ -600,6 +649,7 @@ class BarcodeScannerService {
   Future<_FrameResult> _processCameraImage(
     CameraImage image,
     CameraDescription camera, {
+    required DeviceOrientation deviceOrientation,
     Rect? scanWindow,
     Size? screenSize,
   }) async {
@@ -619,6 +669,7 @@ class BarcodeScannerService {
     final inputImage = await _inputImageFromCameraImage(
       image,
       camera,
+      deviceOrientation: deviceOrientation,
       scanWindow: scanWindow,
       screenSize: screenSize,
     );
