@@ -15,7 +15,7 @@ dependencies:
   camera: ^0.11.0
   google_mlkit_barcode_scanning: ^0.15.0
   image_picker: ^1.2.3
-  flutter_zxing: ^2.3.0
+  flutter_zxing: 2.3.0
   app_settings: ^7.0.0
   vibration: ^3.2.1
   shared_preferences: ^2.5.5
@@ -31,6 +31,10 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: SmartScannerPlugin
 
   # To add assets to your package, add an assets section, like this:
   # assets:
