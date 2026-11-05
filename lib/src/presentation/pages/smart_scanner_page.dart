@@ -10,6 +10,7 @@ import 'package:flutter_zxing/flutter_zxing.dart'
 import '../../smart_scanner.dart';
 
 import '../../controllers/scanner_controller.dart';
+import '../../domain/usecases/barcode_processor_usecase.dart';
 import '../widgets/custom_barcode_scanner.dart';
 import '../widgets/scanner_overlay.dart';
 import '../widgets/scanner_controls.dart';
@@ -87,6 +88,10 @@ class SmartScannerScreen extends StatefulWidget {
   final bool isMultiScan;
   final bool showMultiScanToggle;
 
+  /// In multi-scan, whether scanning an already-scanned code again increases
+  /// its quantity (`true`) or leaves it unchanged (`false`).
+  final bool incrementOnDuplicate;
+
   /// Whether the phone vibrates when a code is scanned (single scan, each new
   /// code in multi-scan, and finishing a multi-scan). `null` follows the
   /// app-wide `SmartScanner.vibrateOnScan`. Light taps on the
@@ -115,6 +120,7 @@ class SmartScannerScreen extends StatefulWidget {
     this.isQRMode = false,
     this.isMultiScan = false,
     this.showMultiScanToggle = true,
+    this.incrementOnDuplicate = true,
     this.enableVibration,
     this.bottomWidgetBuilder,
     this.multiScanItemBuilder,
@@ -159,7 +165,12 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
     super.initState();
     // Read now so the saved setting has loaded by the time a code is scanned.
     _vibrateOnScan = SmartScanner.vibrateOnScan;
-    _controller = ScannerController(isMultiScan: widget.isMultiScan);
+    _controller = ScannerController(
+      isMultiScan: widget.isMultiScan,
+      barcodeProcessor: BarcodeProcessorUseCase(
+        incrementOnDuplicate: widget.incrementOnDuplicate,
+      ),
+    );
 
     _cornerController = AnimationController(
       vsync: this,

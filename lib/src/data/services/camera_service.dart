@@ -52,6 +52,21 @@ class CameraService {
     }();
   }
 
+  /// Whether this device has at least one camera the scanner can use.
+  ///
+  /// Returns `false` (never throws) when the device has no camera or the
+  /// camera list can't be queried. This does not check the camera permission.
+  static Future<bool> hasCamera() async {
+    if (_cachedCameras != null && _cachedCameras!.isNotEmpty) return true;
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isNotEmpty) _cachedCameras = cameras;
+      return cameras.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Initializes the camera and starts the live feed.
   /// Returns an error string if something goes wrong, or null on success.
   Future<String?> initializeCamera({

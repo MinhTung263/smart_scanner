@@ -3,7 +3,13 @@ import '../entities/scanned_barcode.dart';
 class BarcodeProcessorUseCase {
   final int debounceMilliseconds;
 
-  const BarcodeProcessorUseCase({this.debounceMilliseconds = 1200});
+  /// When false, re-scanning an already-scanned code leaves its count as is.
+  final bool incrementOnDuplicate;
+
+  const BarcodeProcessorUseCase({
+    this.debounceMilliseconds = 1200,
+    this.incrementOnDuplicate = true,
+  });
 
   /// Processes newly detected barcodes against the existing list of scanned barcodes.
   /// Returns a map of the updated scanned barcodes and a boolean indicating if there was any change.
@@ -26,7 +32,7 @@ class BarcodeProcessorUseCase {
           lastIncrementTime: now,
         );
         hasNewOrIncremented = true;
-      } else {
+      } else if (incrementOnDuplicate) {
         final bool timeThresholdMet =
             now.difference(existingItem.lastIncrementTime).inMilliseconds >
             debounceMilliseconds;
