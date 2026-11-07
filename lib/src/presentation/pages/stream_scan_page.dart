@@ -10,7 +10,6 @@ import '../../domain/usecases/stream_scan_dispatcher.dart';
 import '../components/stream_scan_continuous_toggle_component.dart';
 import '../components/stream_scan_counter_component.dart';
 import '../components/stream_scan_error_chip_component.dart';
-import '../components/stream_scan_laser_component.dart';
 import '../components/stream_scan_result_card_component.dart';
 import '../components/stream_scan_slow_network_component.dart';
 import '../controllers/stream_scan_controller.dart';
@@ -410,13 +409,13 @@ class StreamScanPageState extends State<StreamScanPage> {
     );
   }
 
-  /// Laser while scanning; "Chạm để quét tiếp" while paused in single mode.
+  /// Empty while scanning; "Chạm để quét tiếp" while paused in single mode.
   Widget _buildFrameContent() {
     return ValueListenableBuilder<bool>(
       valueListenable: _controller.isWaitingForTap,
       builder: (BuildContext context, bool isWaiting, _) {
         if (!isWaiting) {
-          return const StreamScanLaserComponent();
+          return const SizedBox.shrink();
         }
         return GestureDetector(
           key: const ValueKey<String>('stream_scan_tap_to_continue'),

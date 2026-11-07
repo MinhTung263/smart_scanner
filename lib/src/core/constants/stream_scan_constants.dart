@@ -33,8 +33,6 @@ abstract final class StreamScanConstants {
   /// Duration of the green or red scan-frame flash after a result.
   static const Duration frameFlashDuration = Duration(milliseconds: 350);
 
-  /// Duration of one laser sweep across the scan frame.
-  static const Duration laserSweepDuration = Duration(milliseconds: 1800);
 
   // ---- Texts ----
 
@@ -101,7 +99,7 @@ abstract final class StreamScanConstants {
 
   // ---- Colors ----
 
-  /// Success color hex value (finish button, frame flash, laser).
+  /// Success color hex value (finish button, frame flash).
   static const int successColorValue = 0xFF10B981;
 
   /// Error color hex value (error toast, frame error border).
@@ -113,8 +111,6 @@ abstract final class StreamScanConstants {
   /// Dark surface color hex value (slow network, info toast).
   static const int cardBackgroundColorValue = 0xFF1C1C2E;
 
-  /// Laser line color hex value.
-  static const int laserColorValue = 0xFF34D399;
 
   /// Toggle active track color hex value.
   static const int toggleActiveColorValue = 0xFF2563EB;

@@ -62,24 +62,51 @@ Rect calculateScanWindow({
     0.0,
     maxWidth,
   );
-  final double heightMultiplier = isQRMode
-      ? 1.0
-      : (0.15 + 0.35 * ((sizeRatio - 0.2) / 0.7));
+  final Offset center = screenSize.center(
+    Offset(0, isLandscape ? 0 : _scanWindowVerticalOffset),
+  );
+
+  // QR codes are square: use a square frame, shrunk to fit the height limit.
+  if (isQRMode) {
+    final double maxSide = isLandscape
+        ? screenSize.height * 0.75
+        : screenSize.height;
+    final double side = width.clamp(0.0, maxSide);
+    return Rect.fromCenter(center: center, width: side, height: side);
+  }
+
+  final double heightMultiplier = 0.15 + 0.35 * ((sizeRatio - 0.2) / 0.7);
   final double originalHeight = originalWidth * heightMultiplier;
   final double maxHeight = isLandscape
-      ? screenSize.height * (isQRMode ? 0.75 : 0.65)
+      ? screenSize.height * 0.65
       : screenSize.height;
   final double height = (originalHeight * _scanWindowHeightScale).clamp(
     0.0,
     maxHeight,
   );
 
-  return Rect.fromCenter(
-    center: screenSize.center(
-      Offset(0, isLandscape ? 0 : _scanWindowVerticalOffset),
-    ),
-    width: width,
-    height: height,
+  return Rect.fromCenter(center: center, width: width, height: height);
+}
+
+const double _controlsMinTop = 68.0;
+const double _controlsGapAboveWindow = 52.0;
+// ScannerTopBar bottom below the safe area: 8 padding + 42 button.
+const double _topBarBottomInset = 50.0;
+const double _controlsGapBelowTopBar = 6.0;
+
+/// Top of the controls row ("Quét liên tục"): just above the largest scan
+/// window, but never under the top bar, which sits below the status bar or
+/// notch ([safeAreaTop]). Only layouts that used to overlap the bar move.
+@visibleForTesting
+double calculateControlsTop({
+  required double highestScanWindowTop,
+  required double safeAreaTop,
+}) {
+  final double belowTopBar =
+      safeAreaTop + _topBarBottomInset + _controlsGapBelowTopBar;
+  return math.max(
+    math.max(_controlsMinTop, belowTopBar),
+    highestScanWindowTop - _controlsGapAboveWindow,
   );
 }
 
@@ -784,8 +811,10 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
                   isQRMode: widget.isQRMode,
                 ).width;
 
-                final double fixedControlsTop =
-                    math.max(68.0, highestScanWindowTop - 52.0);
+                final double fixedControlsTop = calculateControlsTop(
+                  highestScanWindowTop: highestScanWindowTop,
+                  safeAreaTop: MediaQuery.paddingOf(context).top,
+                );
                 final double fixedRightMargin =
                     (size.width - defaultScanWindowWidth) / 2;
 

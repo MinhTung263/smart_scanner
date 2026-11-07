@@ -176,6 +176,7 @@ class CameraService {
           : ImageFormatGroup.bgra8888, // MUST be bgra8888 on iOS for ML Kit
     );
     _controller = controller;
+    _exposurePoint = null;
 
     try {
       _initializeControllerFuture = controller.initialize();
@@ -283,6 +284,7 @@ class CameraService {
           ImageFormatGroup.yuv420, // Must be yuv420 as this is the fallback
     );
     _controller = controller;
+    _exposurePoint = null;
 
     try {
       _initializeControllerFuture = controller.initialize();
@@ -380,6 +382,7 @@ class CameraService {
 
     _controller = null;
     _initializeControllerFuture = null;
+    _exposurePoint = null;
 
     _isTorchOn = false;
     final previousDispose = _globalDisposeFuture;
@@ -482,21 +485,26 @@ class CameraService {
     TapDownDetails? details,
   ) async {
     if (details == null) {
-      await focusOnPoint(null);
+      await focusOnPoint(null, reason: 'reset');
       return;
     }
     final size = MediaQuery.of(context).size;
     final double dx = (details.localPosition.dx / size.width).clamp(0.0, 1.0);
     final double dy = (details.localPosition.dy / size.height).clamp(0.0, 1.0);
-    await focusOnPoint(Offset(dx, dy));
+    await focusOnPoint(Offset(dx, dy), reason: 'tap');
   }
 
   /// Focuses and meters exposure on the center of the visible scan window
   /// (the white guide frame) instead of resetting to the camera's default
   /// whole-frame auto point, so the barcode area itself stays sharp.
-  Future<void> focusOnScanWindow(Rect scanWindow, Size screenSize) async {
+  /// [reason] only labels debug logs.
+  Future<void> focusOnScanWindow(
+    Rect scanWindow,
+    Size screenSize, {
+    String reason = 'other',
+  }) async {
     if (screenSize.width == 0 || screenSize.height == 0) {
-      await focusOnPoint(null);
+      await focusOnPoint(null, reason: reason);
       return;
     }
     final double dx = (scanWindow.center.dx / screenSize.width).clamp(0.0, 1.0);
@@ -504,33 +512,80 @@ class CameraService {
       0.0,
       1.0,
     );
-    await focusOnPoint(Offset(dx, dy));
+    await focusOnPoint(Offset(dx, dy), reason: reason);
   }
 
   bool _isFocusing = false;
 
-  Future<void> focusOnPoint(Offset? normalizedOffset) async {
+  // Exposure point currently set on [_controller]; reset with each new camera.
+  Offset? _exposurePoint;
+
+  static const double _exposurePointTolerance = 0.01;
+
+  /// Applies a focus request at [point] with a single autofocus sweep.
+  ///
+  /// On Android every setFocusPoint/setExposurePoint call starts a new
+  /// CameraX focus-metering action that sweeps focus again and is awaited
+  /// until it finishes, so the old "clear, focus, exposure" sequence swept
+  /// twice. Exposure is now only re-sent when the point actually moved
+  /// (after dropping the old AF point, so that update does not sweep), and
+  /// the plugin keeps it in later requests. On iOS both modes are continuous,
+  /// so skipping the repeated exposure call changes nothing there.
+  @visibleForTesting
+  static Future<void> applyFocusPoint({
+    required Offset point,
+    required Offset? currentExposurePoint,
+    required Future<void> Function(Offset? point) setFocusPoint,
+    required Future<void> Function(Offset? point) setExposurePoint,
+  }) async {
+    final bool exposureMoved =
+        currentExposurePoint == null ||
+        (currentExposurePoint - point).distance > _exposurePointTolerance;
+    if (exposureMoved) {
+      await setFocusPoint(null);
+      await setExposurePoint(point);
+    }
+    // Each call starts a fresh sweep, so no "clear first" is needed.
+    await setFocusPoint(point);
+  }
+
+  /// Focuses (and meters exposure) at [normalizedOffset], or resets to the
+  /// camera default when null. [reason] only labels debug logs.
+  Future<void> focusOnPoint(
+    Offset? normalizedOffset, {
+    String reason = 'other',
+  }) async {
     final controller = _controller;
-    if (controller == null || !controller.value.isInitialized || _isFocusing)
+    if (controller == null || !controller.value.isInitialized) return;
+    if (_isFocusing) {
+      if (kDebugMode) {
+        debugPrint('[Focus] ($reason) SKIPPED: previous request still running');
+      }
       return;
+    }
 
     _isFocusing = true;
+    final Stopwatch? sw = kDebugMode ? (Stopwatch()..start()) : null;
     try {
       if (normalizedOffset != null) {
-        // Clear first so a repeat request at the same point (e.g. the
-        // periodic re-focus nudge) can't be treated as a no-op and skipped —
-        // this forces a genuinely fresh autofocus scan every time, which
-        // matters most right after the phone moves closer to the subject.
-        await controller.setFocusPoint(null);
-        await controller.setFocusPoint(normalizedOffset);
-        await controller.setExposurePoint(normalizedOffset);
+        await applyFocusPoint(
+          point: normalizedOffset,
+          currentExposurePoint: _exposurePoint,
+          setFocusPoint: controller.setFocusPoint,
+          setExposurePoint: controller.setExposurePoint,
+        );
+        if (_controller == controller) _exposurePoint = normalizedOffset;
       } else {
         await controller.setFocusPoint(null);
         await controller.setExposurePoint(null);
+        if (_controller == controller) _exposurePoint = null;
       }
     } catch (_) {
     } finally {
       _isFocusing = false;
+      if (sw != null) {
+        debugPrint('[Focus] ($reason) done in ${sw.elapsedMilliseconds}ms');
+      }
     }
   }
 

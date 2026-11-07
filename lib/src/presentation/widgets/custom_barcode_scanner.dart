@@ -257,7 +257,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       });
     } else {
       _blurrySinceMs = null;
-      _refocusOnScanWindow();
+      _refocusOnScanWindow(reason: 'start');
     }
   }
 
@@ -288,7 +288,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     final bool due =
         justSettled || now - _blurrySinceMs! >= _blurRefocusAfterMs;
     if (due && now - _lastRefocusAtMs >= _refocusCooldownMs) {
-      _refocusOnScanWindow();
+      _refocusOnScanWindow(reason: justSettled ? 'settled' : 'blur');
     }
   }
 
@@ -453,6 +453,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
         _lastUserActivityMs = now;
       }
 
+
       _refocusIfBlurry(
         now: now,
         isBlurry: isBlurry,
@@ -581,13 +582,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
   }
 
   void refocus() {
-    _refocusOnScanWindow();
+    _refocusOnScanWindow(reason: 'zoom');
   }
 
   /// Focuses on the scan window's center when one is provided, so the camera
   /// keeps prioritizing sharpness where the barcode actually appears instead
-  /// of resetting to a whole-frame default point.
-  void _refocusOnScanWindow() {
+  /// of resetting to a whole-frame default point. [reason] is for debug logs.
+  void _refocusOnScanWindow({String reason = 'other'}) {
     if (!_canScan) return;
     _lastRefocusAtMs = _clock.elapsedMilliseconds;
     final scanWindow = widget.scanWindow;
@@ -595,7 +596,11 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       _cameraService.focusOnScreenPosition(context, null);
       return;
     }
-    _cameraService.focusOnScanWindow(scanWindow, MediaQuery.of(context).size);
+    _cameraService.focusOnScanWindow(
+      scanWindow,
+      MediaQuery.of(context).size,
+      reason: reason,
+    );
   }
 
   Future<void> pauseCamera() async {
@@ -687,7 +692,8 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                     _lastUserActivityMs = _clock.elapsedMilliseconds;
                     _handleScaleUpdate(details);
                   },
-                  onScaleEnd: (details) => _refocusOnScanWindow(),
+                  onScaleEnd: (details) =>
+                      _refocusOnScanWindow(reason: 'pinch'),
                   onDoubleTap: () {
                     _lastUserActivityMs = _clock.elapsedMilliseconds;
                     // Toggle between the default zoom and the max available,
@@ -712,7 +718,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                     final scanWindow = widget.scanWindow;
                     if (scanWindow != null) {
                       if (scanWindow.contains(details.localPosition)) {
-                        _refocusOnScanWindow();
+                        _refocusOnScanWindow(reason: 'tap');
                         _showFocusIndicatorAt(scanWindow.center);
                       }
                     } else {
@@ -770,21 +776,25 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
         if (widget.showBoundingBox &&
             _recognizedBarcodes.isNotEmpty &&
             isCameraReady)
-          AnimatedBuilder(
-            animation: Listenable.merge([_pulseController, _lockController]),
-            builder: (context, child) {
-              return CustomPaint(
-                painter: BarcodeOverlayPainter(
-                  barcodes: _recognizedBarcodes,
-                  imageSize: previewSize,
-                  screenSize: size,
-                  color: widget.boundingBoxColor,
-                  pulseValue: _pulseController.value,
-                  lockValue: _lockController.value,
-                  zoomLevel: _currentZoom,
-                ),
-              );
-            },
+          // Purely visual: a full-screen CustomPaint otherwise claims every
+          // tap, blocking tap-to-focus while a barcode is on screen.
+          IgnorePointer(
+            child: AnimatedBuilder(
+              animation: Listenable.merge([_pulseController, _lockController]),
+              builder: (context, child) {
+                return CustomPaint(
+                  painter: BarcodeOverlayPainter(
+                    barcodes: _recognizedBarcodes,
+                    imageSize: previewSize,
+                    screenSize: size,
+                    color: widget.boundingBoxColor,
+                    pulseValue: _pulseController.value,
+                    lockValue: _lockController.value,
+                    zoomLevel: _currentZoom,
+                  ),
+                );
+              },
+            ),
           ),
 
         if (widget.overlayBuilder != null)

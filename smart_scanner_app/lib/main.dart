@@ -482,12 +482,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: <Widget>[
                   Row(
                     children: <Widget>[
-                      const Text(
-                        'Quét Barcode Stream',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                      const Flexible(
+                        child: Text(
+                          'Quét Barcode Stream',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
