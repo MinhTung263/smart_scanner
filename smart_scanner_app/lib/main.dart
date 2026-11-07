@@ -94,6 +94,18 @@ class _HomeScreenState extends State<HomeScreen> {
     // Chờ hàng đợi nền xử lý xong các lượt quét còn lại
     final StreamScanSummary summary = await session.drained;
 
+    // Người dùng xác nhận thoát: gỡ mọi sản phẩm đã thêm trong phiên khỏi giỏ.
+    if (session.isDiscarded) {
+      summary.acceptedByCode.forEach((String code, int qty) {
+        final int remaining = (cart[code] ?? 0) - qty;
+        if (remaining > 0) {
+          cart[code] = remaining;
+        } else {
+          cart.remove(code);
+        }
+      });
+    }
+
     if (!mounted) {
       return;
     }
@@ -125,6 +137,11 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              if (session.isDiscarded)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text('• Đã thoát: bỏ các sản phẩm vừa quét khỏi giỏ'),
+                ),
               Text('• Số lượng đã chấp nhận: ${summary.acceptedQuantity}'),
               const SizedBox(height: 6),
               Text('• Số lượng chưa thêm vào giỏ: ${summary.notAddedQuantity}'),

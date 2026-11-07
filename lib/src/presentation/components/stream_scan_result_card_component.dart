@@ -1,5 +1,4 @@
-import 'dart:math' as math;
-
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/constants/stream_scan_constants.dart';
@@ -7,17 +6,17 @@ import '../../domain/entities/stream_scan_card_item.dart';
 import '../controllers/stream_scan_controller.dart';
 
 /// Builder signature for custom stream scan result cards.
-/// The returned widget fills one fixed-height layer of the stack.
+/// The returned widget replaces the content of the front card.
 typedef StreamScanCardBuilder =
     Widget Function(BuildContext context, StreamScanCardItem item);
 
-/// Shows scanned products as stacked layers, most recent scan in front.
-/// Layers are keyed by code, so a re-scanned product slides to the front.
+/// Card of the most recently scanned product, with decorative layers below.
+/// Shows "Chưa quét mã nào" until the first scan.
 class StreamScanResultCardComponent extends StatelessWidget {
   /// Controller supplying reactive card state.
   final StreamScanController controller;
 
-  /// Custom builder override for the content of each layer.
+  /// Custom builder override for the content of the front card.
   final StreamScanCardBuilder? customBuilder;
 
   /// Creates a stream scan result card component.
@@ -29,171 +28,218 @@ class StreamScanResultCardComponent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const int layers = StreamScanConstants.decorativeLayerCount;
+    const double stackHeight =
+        StreamScanConstants.productCardHeight +
+        layers * StreamScanConstants.decorativeLayerOffsetY;
+
     return RepaintBoundary(
-      child: ValueListenableBuilder<List<StreamScanCardItem>>(
-        valueListenable: controller.recentCards,
-        builder: (BuildContext context, List<StreamScanCardItem> cards, _) {
-          final int maxLayers = controller.options.maxVisibleCards;
-          if (cards.isEmpty || maxLayers <= 0) {
-            return const SizedBox.shrink();
-          }
-
-          final int count = math.min(maxLayers, cards.length);
-          final double stackHeight =
-              StreamScanConstants.layerCardHeight +
-              (maxLayers - 1) * StreamScanConstants.layerOffsetY;
-
-          return SizedBox(
-            height: stackHeight,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: <Widget>[
-                // Paint back to front so the newest layer sits on top.
-                for (int depth = count - 1; depth >= 0; depth--)
-                  _buildLayer(context, cards[depth], depth, maxLayers),
-              ],
+      child: SizedBox(
+        height: stackHeight,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            // Decorative layers only; drawn farthest first.
+            for (int depth = layers; depth >= 1; depth--)
+              _buildDecorativeLayer(depth),
+            Positioned(
+              top: 0.0,
+              left: 0.0,
+              right: 0.0,
+              height: StreamScanConstants.productCardHeight,
+              child: ValueListenableBuilder<List<StreamScanCardItem>>(
+                valueListenable: controller.recentCards,
+                builder:
+                    (BuildContext context, List<StreamScanCardItem> cards, _) {
+                      final StreamScanCardItem? front = cards.isEmpty
+                          ? null
+                          : cards.first;
+                      if (front != null && customBuilder != null) {
+                        return customBuilder!(context, front);
+                      }
+                      return _buildCardShell(
+                        child: front == null
+                            ? _buildEmptyContent()
+                            : _buildProductContent(context, front),
+                      );
+                    },
+              ),
             ),
-          );
-        },
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildLayer(
-    BuildContext context,
-    StreamScanCardItem item,
-    int depth,
-    int maxLayers,
-  ) {
-    // Front layer stays anchored at the bottom; older layers peek above it.
-    final double inset = depth * StreamScanConstants.layerInsetX;
-    return AnimatedPositioned(
-      key: ValueKey<String>('layer_${item.code}'),
-      duration: StreamScanConstants.layerAnimationDuration,
-      curve: Curves.easeOutQuart,
-      top: (maxLayers - 1 - depth) * StreamScanConstants.layerOffsetY,
+  Widget _buildDecorativeLayer(int depth) {
+    final double inset = depth * StreamScanConstants.decorativeLayerInsetX;
+    final double alpha = 0.75 - depth * 0.18;
+    return Positioned(
+      top: depth * StreamScanConstants.decorativeLayerOffsetY,
       left: inset,
       right: inset,
-      height: StreamScanConstants.layerCardHeight,
-      child: customBuilder != null
-          ? customBuilder!(context, item)
-          : _buildDefaultCard(item),
+      height: StreamScanConstants.productCardHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(
+            StreamScanConstants.productCardColorValue,
+          ).withValues(alpha: alpha),
+          borderRadius: BorderRadius.circular(
+            StreamScanConstants.defaultCardBorderRadius,
+          ),
+        ),
+      ),
     );
   }
 
-  Widget _buildDefaultCard(StreamScanCardItem item) {
-    final bool isProcessing = item.isProcessing;
-    final int? quantity = item.displayQuantity;
-    final Color accentColor = isProcessing
-        ? const Color(StreamScanConstants.warningColorValue)
-        : const Color(StreamScanConstants.successColorValue);
-
+  Widget _buildCardShell({required Widget child}) {
     return Container(
-      key: ValueKey<String>('card_${item.code}'),
-      padding: const EdgeInsets.symmetric(
-        horizontal: StreamScanConstants.defaultComponentPadding,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
       decoration: BoxDecoration(
-        color: const Color(StreamScanConstants.cardBackgroundColorValue),
+        color: const Color(StreamScanConstants.productCardColorValue),
         borderRadius: BorderRadius.circular(
           StreamScanConstants.defaultCardBorderRadius,
         ),
-        border: Border.all(
-          color: accentColor.withValues(alpha: 0.35),
-          width: 1.0,
-        ),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: StreamScanConstants.layerShadowBlur,
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 8.0,
             offset: const Offset(0.0, 4.0),
           ),
         ],
       ),
-      child: Row(
-        children: <Widget>[
-          if (isProcessing)
-            SizedBox(
-              width: 20.0,
-              height: 20.0,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.0,
-                valueColor: AlwaysStoppedAnimation<Color>(accentColor),
-              ),
-            )
-          else
-            Icon(Icons.check_circle_rounded, color: accentColor, size: 20.0),
-          const SizedBox(width: StreamScanConstants.defaultItemSpacing),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  item.title ?? item.code,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14.0,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (item.subtitle != null && item.subtitle!.isNotEmpty)
-                  Text(
-                    item.subtitle!,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontSize: 12.0,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
+      child: child,
+    );
+  }
+
+  Widget _buildEmptyContent() {
+    return Row(
+      children: <Widget>[
+        _buildPlaceholderThumbnail(),
+        const SizedBox(width: 12.0),
+        const Expanded(
+          child: Text(
+            StreamScanConstants.emptyCardLabel,
+            style: TextStyle(
+              color: Color(StreamScanConstants.productSubtitleColorValue),
+              fontSize: 14.0,
+              fontWeight: FontWeight.w500,
             ),
           ),
-          if (quantity != null || isProcessing)
-            Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: <Widget>[
-                if (quantity != null) _buildQuantityBadge(quantity),
-                if (isProcessing)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2.0),
-                    child: Text(
-                      '+${item.pendingQuantity} '
-                      '${StreamScanConstants.layerPendingSuffix}',
-                      style: const TextStyle(
-                        color: Color(StreamScanConstants.warningColorValue),
-                        fontSize: 11.0,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProductContent(BuildContext context, StreamScanCardItem item) {
+    final bool isLookingUp = !item.hasBeenAccepted;
+    return Row(
+      key: ValueKey<String>('card_${item.code}'),
+      children: <Widget>[
+        _buildThumbnail(context, item.imageUrl),
+        const SizedBox(width: 12.0),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                item.title ??
+                    (isLookingUp
+                        ? StreamScanConstants.defaultProcessingLabel
+                        : item.code),
+                style: const TextStyle(
+                  color: Color(StreamScanConstants.productTitleColorValue),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14.0,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2.0),
+              Text(
+                item.code,
+                style: const TextStyle(
+                  color: Color(StreamScanConstants.productSubtitleColorValue),
+                  fontSize: 12.0,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: StreamScanConstants.defaultItemSpacing),
+        if (isLookingUp)
+          const SizedBox(
+            width: 18.0,
+            height: 18.0,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.0,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                Color(StreamScanConstants.badgeTextColorValue),
+              ),
             ),
-        ],
+          )
+        else
+          _buildQuantityBadge(item.acceptedQuantity),
+        const SizedBox(width: 4.0),
+      ],
+    );
+  }
+
+  Widget _buildThumbnail(BuildContext context, String? imageUrl) {
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return _buildPlaceholderThumbnail();
+    }
+    // Decode at display size to keep memory low on weak devices.
+    final int cacheSize =
+        (StreamScanConstants.thumbnailSize *
+                MediaQuery.devicePixelRatioOf(context))
+            .round();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8.0),
+      child: Image.network(
+        imageUrl,
+        width: StreamScanConstants.thumbnailSize,
+        height: StreamScanConstants.thumbnailSize,
+        fit: BoxFit.cover,
+        cacheWidth: cacheSize,
+        errorBuilder: (BuildContext context, Object error, StackTrace? stack) =>
+            _buildPlaceholderThumbnail(),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholderThumbnail() {
+    return Container(
+      width: StreamScanConstants.thumbnailSize,
+      height: StreamScanConstants.thumbnailSize,
+      decoration: BoxDecoration(
+        color: const Color(StreamScanConstants.badgeBackgroundColorValue),
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: const Icon(
+        CupertinoIcons.barcode,
+        color: Color(StreamScanConstants.badgeTextColorValue),
+        size: 26.0,
       ),
     );
   }
 
   Widget _buildQuantityBadge(int quantity) {
-    const Color badgeColor = Color(StreamScanConstants.layerQuantityColorValue);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 4.0),
+      padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
       decoration: BoxDecoration(
-        color: badgeColor.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(
-          StreamScanConstants.defaultChipBorderRadius,
-        ),
+        color: const Color(StreamScanConstants.badgeBackgroundColorValue),
+        borderRadius: BorderRadius.circular(10.0),
       ),
       child: Text(
-        '${StreamScanConstants.layerQuantityPrefix}$quantity',
+        '${StreamScanConstants.quantityBadgePrefix}$quantity',
         style: const TextStyle(
-          color: badgeColor,
-          fontSize: 14.0,
-          fontWeight: FontWeight.w700,
+          color: Color(StreamScanConstants.badgeTextColorValue),
+          fontSize: 15.0,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );

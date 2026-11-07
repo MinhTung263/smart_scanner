@@ -43,6 +43,8 @@ class StreamScanDispatcher {
   final Map<String, _CodeState> _codeStates = <String, _CodeState>{};
   final List<String> _readyQueue = <String>[];
 
+  final Map<String, int> _acceptedByCode = <String, int>{};
+
   int _activeCalls = 0;
   int _acceptedCount = 0;
   int _rejectedCount = 0;
@@ -88,6 +90,7 @@ class StreamScanDispatcher {
   StreamScanSummary get summary => StreamScanSummary(
     acceptedQuantity: _acceptedCount,
     notAddedQuantity: _rejectedCount,
+    acceptedByCode: Map<String, int>.unmodifiable(_acceptedByCode),
   );
 
   /// Future completing when all active and queued calls finish.
@@ -214,6 +217,7 @@ class StreamScanDispatcher {
     _CodeState state,
   ) {
     _acceptedCount += req.quantity;
+    _acceptedByCode[req.code] = (_acceptedByCode[req.code] ?? 0) + req.quantity;
 
     _safeCall(
       () => onAccept?.call(req, response),

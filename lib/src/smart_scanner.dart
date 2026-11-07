@@ -400,8 +400,9 @@ class SmartScanner {
   }
 
   /// Opens continuous barcode stream scanner with realtime POS callback.
-  /// Dispatches scanned codes to [onScan] and updates card and chip feedback.
-  /// Returns [StreamScanSession] with [StreamScanSession.drained] tracking background drain.
+  /// Each counted scan calls [onScan] (lookup + add to cart in the host).
+  /// "Hoàn thành" returns normally; confirmed back sets `isDiscarded`, and
+  /// the host should then remove `acceptedByCode` after awaiting `drained`.
   static Future<StreamScanSession> scanStream(
     BuildContext context, {
     required Future<StreamScanResponse> Function(StreamScanRequest request)
@@ -413,6 +414,7 @@ class SmartScanner {
     StreamScanSlowNetworkBuilder? slowNetworkBuilder,
     Widget Function(BuildContext context, VoidCallback onFinish)?
     finishButtonBuilder,
+    StreamScanExitConfirmBuilder? exitConfirmBuilder,
   }) async {
     // Warm up camera list before route transition starts.
     CameraService.preloadCameras();
@@ -422,8 +424,8 @@ class SmartScanner {
       options: options,
     );
 
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
+    final bool? discarded = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
         builder: (BuildContext context) => StreamScanPage(
           dispatcher: dispatcher,
           options: options,
@@ -432,10 +434,15 @@ class SmartScanner {
           chipBuilder: chipBuilder,
           slowNetworkBuilder: slowNetworkBuilder,
           finishButtonBuilder: finishButtonBuilder,
+          exitConfirmBuilder: exitConfirmBuilder,
         ),
       ),
     );
 
-    return dispatcher.session;
+    // Closed by the host (no result) is not a user discard.
+    return StreamScanSession(
+      drained: dispatcher.drained,
+      isDiscarded: discarded ?? false,
+    );
   }
 }

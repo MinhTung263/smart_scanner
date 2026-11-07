@@ -26,6 +26,12 @@ class StreamScanController extends ChangeNotifier {
   final ValueNotifier<List<StreamScanErrorChipItem>> _errorChips =
       ValueNotifier<List<StreamScanErrorChipItem>>(<StreamScanErrorChipItem>[]);
   final ValueNotifier<bool> _isNetworkSlow = ValueNotifier<bool>(false);
+  final ValueNotifier<StreamScanCounter> _counter =
+      ValueNotifier<StreamScanCounter>(const StreamScanCounter());
+  final ValueNotifier<StreamScanFrameFlash> _frameFlash =
+      ValueNotifier<StreamScanFrameFlash>(StreamScanFrameFlash.none);
+  final ValueNotifier<bool> _isContinuous = ValueNotifier<bool>(true);
+  final ValueNotifier<bool> _isWaitingForTap = ValueNotifier<bool>(false);
 
   // Every product scanned this session; order lists codes, most recent first.
   final Map<String, StreamScanCardItem> _sessionCards =
@@ -34,6 +40,13 @@ class StreamScanController extends ChangeNotifier {
 
   final Map<String, Timer> _slowTimers = <String, Timer>{};
   final Map<String, Timer> _chipTimers = <String, Timer>{};
+  Timer? _flashTimer;
+
+  // Reasons the tracker is paused; counting resumes only when none remain.
+  final Set<String> _pauseReasons = <String>{};
+  static const String _singleModePause = 'single';
+  static const String _externalPause = 'external';
+  bool _awaitingSingleResult = false;
 
   /// Creates a controller with scan callback and optional dependencies.
   StreamScanController({
@@ -55,16 +68,31 @@ class StreamScanController extends ChangeNotifier {
     _attachDispatcherListeners();
   }
 
-  /// Front layers, most recently scanned first, at most `maxVisibleCards`.
+  /// Most recently scanned products, newest first, at most `maxVisibleCards`.
   /// The full session list stays in the controller, so a product pushed out
   /// of view is still recognised when it is scanned again.
   ValueNotifier<List<StreamScanCardItem>> get recentCards => _recentCards;
 
-  /// Listenable list of active error chips.
+  /// Listenable list of active toast chips (errors and info).
   ValueNotifier<List<StreamScanErrorChipItem>> get errorChips => _errorChips;
 
   /// Listenable boolean flag indicating slow network.
   ValueNotifier<bool> get isNetworkSlow => _isNetworkSlow;
+
+  /// Distinct products and total quantity accepted in this session.
+  ValueListenable<StreamScanCounter> get counter => _counter;
+
+  /// Momentary green or red flash of the scan frame.
+  ValueListenable<StreamScanFrameFlash> get frameFlash => _frameFlash;
+
+  /// Whether the "Quét liên tục" toggle is on (default on).
+  ValueListenable<bool> get isContinuous => _isContinuous;
+
+  /// True while paused after one accepted code with the toggle off.
+  ValueListenable<bool> get isWaitingForTap => _isWaitingForTap;
+
+  /// Whether anything was scanned this session (accepted or in flight).
+  bool get hasScannedItems => _sessionCards.isNotEmpty;
 
   /// Active options configured for this stream scan session.
   StreamScanOptions get options => _options;
@@ -89,6 +117,31 @@ class StreamScanController extends ChangeNotifier {
     }
   }
 
+  /// Turns continuous scanning on or off and shows an info toast.
+  /// Off: after one accepted code, counting pauses until [continueScanning].
+  void setContinuousMode(bool value) {
+    if (_isContinuous.value == value) {
+      return;
+    }
+    _isContinuous.value = value;
+    if (value) {
+      _awaitingSingleResult = false;
+      _isWaitingForTap.value = false;
+      _removePauseReason(_singleModePause);
+    }
+    _showInfoChip(
+      value
+          ? StreamScanConstants.continuousOnMessage
+          : StreamScanConstants.continuousOffMessage,
+    );
+  }
+
+  /// Resumes counting after the single-mode pause ("Chạm để quét tiếp").
+  void continueScanning() {
+    _isWaitingForTap.value = false;
+    _removePauseReason(_singleModePause);
+  }
+
   /// Manually dismisses an error chip by unique identifier.
   void dismissErrorChip(String id) {
     _cancelChipTimer(id);
@@ -98,11 +151,11 @@ class StreamScanController extends ChangeNotifier {
     _errorChips.value = updated;
   }
 
-  /// Pauses presence tracking while keeping internal state.
-  void pause() => _presenceTracker.pause();
+  /// Pauses counting (e.g. while a dialog is open), keeping presence state.
+  void pause() => _addPauseReason(_externalPause);
 
-  /// Resumes presence tracking with existing states intact.
-  void resume() => _presenceTracker.resume();
+  /// Resumes counting paused by [pause].
+  void resume() => _removePauseReason(_externalPause);
 
   @override
   void dispose() {
@@ -117,6 +170,7 @@ class StreamScanController extends ChangeNotifier {
       timer.cancel();
     }
     _chipTimers.clear();
+    _flashTimer?.cancel();
 
     // Detach UI listeners without cancelling background queue.
     _dispatcher.detachListeners();
@@ -124,6 +178,10 @@ class StreamScanController extends ChangeNotifier {
     _recentCards.dispose();
     _errorChips.dispose();
     _isNetworkSlow.dispose();
+    _counter.dispose();
+    _frameFlash.dispose();
+    _isContinuous.dispose();
+    _isWaitingForTap.dispose();
 
     super.dispose();
   }
@@ -167,10 +225,16 @@ class StreamScanController extends ChangeNotifier {
             timestamp: now,
           );
 
-    // Every counted scan brings its product layer to the front.
+    // Every counted scan brings its product card to the front.
     _cardOrder.remove(request.code);
     _cardOrder.insert(0, request.code);
     _publishCards();
+
+    // Single mode: stop counting until this scan's result is known.
+    if (!_isContinuous.value) {
+      _awaitingSingleResult = true;
+      _addPauseReason(_singleModePause);
+    }
   }
 
   void _handleProcessing(StreamScanRequest request) {
@@ -183,6 +247,7 @@ class StreamScanController extends ChangeNotifier {
 
   void _handleAccept(StreamScanRequest request, StreamScanResponse response) {
     _vibrationService.vibrateSuccess();
+    _flash(StreamScanFrameFlash.success);
 
     // Stop slow network timer for completed request.
     _clearSlowTimer(request.code);
@@ -199,16 +264,23 @@ class StreamScanController extends ChangeNotifier {
       title: response.title,
       subtitle: response.subtitle,
       totalInCart: response.totalInCart,
+      imageUrl: response.imageUrl,
       pendingQuantity: math.max(0, base.pendingQuantity - request.quantity),
       acceptedQuantity: base.acceptedQuantity + request.quantity,
       timestamp: DateTime.now(),
     );
 
-    // Layer order was set at scan time; only add if it was never shown.
+    // Card order was set at scan time; only add if it was never shown.
     if (existing == null) {
       _cardOrder.insert(0, request.code);
     }
     _publishCards();
+
+    // Single mode: one code counted, wait for "Chạm để quét tiếp".
+    if (_awaitingSingleResult) {
+      _awaitingSingleResult = false;
+      _isWaitingForTap.value = true;
+    }
   }
 
   void _handleReject(
@@ -217,6 +289,7 @@ class StreamScanController extends ChangeNotifier {
     int totalUnaddedQuantity,
   ) {
     _vibrationService.vibrateError();
+    _flash(StreamScanFrameFlash.error);
 
     // Stop slow network timer for completed request.
     _clearSlowTimer(request.code);
@@ -228,16 +301,22 @@ class StreamScanController extends ChangeNotifier {
         existing.pendingQuantity - totalUnaddedQuantity,
       );
       if (existing.hasBeenAccepted || remaining > 0) {
-        // Product already in cart: keep its layer at the previous quantity.
+        // Product already in cart: keep its card at the previous quantity.
         _sessionCards[request.code] = existing.copyWith(
           pendingQuantity: remaining,
         );
       } else {
-        // Never added to cart: drop the layer, the chip explains why.
+        // Never added to cart: drop the card, the toast explains why.
         _sessionCards.remove(request.code);
         _cardOrder.remove(request.code);
       }
       _publishCards();
+    }
+
+    // Rejected codes never pause single mode.
+    if (_awaitingSingleResult) {
+      _awaitingSingleResult = false;
+      _removePauseReason(_singleModePause);
     }
 
     final String message =
@@ -247,25 +326,23 @@ class StreamScanController extends ChangeNotifier {
         List<StreamScanErrorChipItem>.from(_errorChips.value);
     final int existingIndex = chips.indexWhere(
       (StreamScanErrorChipItem item) =>
-          item.code == request.code && item.message == message,
+          item.isError &&
+          item.code == request.code &&
+          item.message == message,
     );
 
     if (existingIndex >= 0) {
-      final StreamScanErrorChipItem existing = chips[existingIndex];
-      final int updatedQuantity =
-          existing.unaddedQuantity + totalUnaddedQuantity;
-      final StreamScanErrorChipItem updatedChip = existing.copyWith(
-        unaddedQuantity: updatedQuantity,
+      final StreamScanErrorChipItem existingChip = chips[existingIndex];
+      final StreamScanErrorChipItem updatedChip = existingChip.copyWith(
+        unaddedQuantity: existingChip.unaddedQuantity + totalUnaddedQuantity,
         timestamp: DateTime.now(),
       );
       chips[existingIndex] = updatedChip;
       _errorChips.value = chips;
-      _scheduleChipAutoHide(updatedChip.id);
+      _scheduleChipAutoHide(updatedChip.id, _options.chipAutoHide);
     } else {
-      final String chipId =
-          '${request.code}_${DateTime.now().microsecondsSinceEpoch}';
       final StreamScanErrorChipItem newChip = StreamScanErrorChipItem(
-        id: chipId,
+        id: '${request.code}_${DateTime.now().microsecondsSinceEpoch}',
         code: request.code,
         message: message,
         unaddedQuantity: totalUnaddedQuantity,
@@ -274,13 +351,50 @@ class StreamScanController extends ChangeNotifier {
       chips.insert(0, newChip);
       _trimChipsList(chips);
       _errorChips.value = chips;
-      _scheduleChipAutoHide(newChip.id);
+      _scheduleChipAutoHide(newChip.id, _options.chipAutoHide);
     }
   }
 
-  void _scheduleChipAutoHide(String chipId) {
+  void _showInfoChip(String message) {
+    final List<StreamScanErrorChipItem> chips =
+        List<StreamScanErrorChipItem>.from(_errorChips.value);
+    final StreamScanErrorChipItem chip = StreamScanErrorChipItem(
+      id: 'info_${DateTime.now().microsecondsSinceEpoch}',
+      code: '',
+      message: message,
+      unaddedQuantity: 0,
+      kind: StreamScanChipKind.info,
+      timestamp: DateTime.now(),
+    );
+    chips.insert(0, chip);
+    _trimChipsList(chips);
+    _errorChips.value = chips;
+    _scheduleChipAutoHide(chip.id, StreamScanConstants.infoChipAutoHide);
+  }
+
+  void _flash(StreamScanFrameFlash kind) {
+    _flashTimer?.cancel();
+    _frameFlash.value = kind;
+    _flashTimer = Timer(StreamScanConstants.frameFlashDuration, () {
+      _frameFlash.value = StreamScanFrameFlash.none;
+    });
+  }
+
+  void _addPauseReason(String reason) {
+    _pauseReasons.add(reason);
+    _presenceTracker.pause();
+  }
+
+  void _removePauseReason(String reason) {
+    _pauseReasons.remove(reason);
+    if (_pauseReasons.isEmpty) {
+      _presenceTracker.resume();
+    }
+  }
+
+  void _scheduleChipAutoHide(String chipId, Duration duration) {
     _cancelChipTimer(chipId);
-    _chipTimers[chipId] = Timer(_options.chipAutoHide, () {
+    _chipTimers[chipId] = Timer(duration, () {
       _chipTimers.remove(chipId);
       final List<StreamScanErrorChipItem> updated = _errorChips.value
           .where((StreamScanErrorChipItem item) => item.id != chipId)
@@ -307,6 +421,19 @@ class StreamScanController extends ChangeNotifier {
     _recentCards.value = <StreamScanCardItem>[
       for (int i = 0; i < visible; i++) _sessionCards[_cardOrder[i]]!,
     ];
+
+    int itemCount = 0;
+    int totalQuantity = 0;
+    for (final StreamScanCardItem card in _sessionCards.values) {
+      if (card.hasBeenAccepted) {
+        itemCount++;
+        totalQuantity += card.acceptedQuantity;
+      }
+    }
+    _counter.value = StreamScanCounter(
+      itemCount: itemCount,
+      totalQuantity: totalQuantity,
+    );
   }
 
   void _trimChipsList(List<StreamScanErrorChipItem> list) {

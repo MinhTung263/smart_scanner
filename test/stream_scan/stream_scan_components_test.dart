@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_scanner/src/core/constants/stream_scan_constants.dart';
+import 'package:smart_scanner/src/presentation/components/stream_scan_counter_component.dart';
 import 'package:smart_scanner/src/presentation/components/stream_scan_error_chip_component.dart';
 import 'package:smart_scanner/src/presentation/components/stream_scan_result_card_component.dart';
 import 'package:smart_scanner/src/presentation/components/stream_scan_slow_network_component.dart';
@@ -14,99 +15,71 @@ Widget _buildTestApp(Widget child) {
   return MaterialApp(home: Scaffold(body: child));
 }
 
+StreamScanController _acceptingController() {
+  return StreamScanController(
+    onScan: (StreamScanRequest req) async => const StreamScanResponse.accept(),
+  );
+}
+
+/// Opens [StreamScanPage] from a button and records the popped result.
+Future<List<bool?>> _openPage(
+  WidgetTester tester,
+  StreamScanController controller,
+) async {
+  final List<bool?> results = <bool?>[];
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Builder(
+        builder: (BuildContext context) {
+          return ElevatedButton(
+            onPressed: () async {
+              results.add(
+                await Navigator.of(context).push<bool>(
+                  MaterialPageRoute<bool>(
+                    builder: (BuildContext ctx) =>
+                        StreamScanPage(controller: controller),
+                  ),
+                ),
+              );
+            },
+            child: const Text('Mở Scanner'),
+          );
+        },
+      ),
+    ),
+  );
+  await tester.tap(find.text('Mở Scanner'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+  expect(find.byType(StreamScanPage), findsOneWidget);
+  return results;
+}
+
 void main() {
   group('StreamScanResultCardComponent', () {
-    testWidgets('renders SizedBox.shrink when recentCards is empty', (
+    testWidgets('shows "Chưa quét mã nào" before the first scan', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       await tester.pumpWidget(
         _buildTestApp(StreamScanResultCardComponent(controller: controller)),
       );
 
-      expect(find.byType(StreamScanResultCardComponent), findsOneWidget);
+      expect(find.text(StreamScanConstants.emptyCardLabel), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.byIcon(Icons.check_circle_rounded), findsNothing);
 
       controller.dispose();
     });
 
-    testWidgets('renders processing card with spinner and pending badge', (
+    testWidgets('shows lookup state while the first scan is in flight', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       controller.recentCards.value = <StreamScanCardItem>[
         StreamScanCardItem(
-          code: 'PROD_100',
-          pendingQuantity: 2,
-          timestamp: DateTime.now(),
-        ),
-      ];
-
-      await tester.pumpWidget(
-        _buildTestApp(StreamScanResultCardComponent(controller: controller)),
-      );
-
-      expect(find.text('PROD_100'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.text('+2 đang xử lý'), findsOneWidget);
-
-      controller.dispose();
-    });
-
-    testWidgets('renders accepted card with title, subtitle, and cart count', (
-      WidgetTester tester,
-    ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
-
-      controller.recentCards.value = <StreamScanCardItem>[
-        StreamScanCardItem(
-          code: '8938505963014',
-          title: 'Trà ô long 450ml',
-          subtitle: '12.000đ',
-          totalInCart: 4,
-          acceptedQuantity: 1,
-          timestamp: DateTime.now(),
-        ),
-      ];
-
-      await tester.pumpWidget(
-        _buildTestApp(StreamScanResultCardComponent(controller: controller)),
-      );
-
-      expect(find.text('Trà ô long 450ml'), findsOneWidget);
-      expect(find.text('12.000đ'), findsOneWidget);
-      expect(find.text('x4'), findsOneWidget);
-      expect(find.byIcon(Icons.check_circle_rounded), findsOneWidget);
-
-      controller.dispose();
-    });
-
-    testWidgets('re-scanned product keeps its quantity and shows pending', (
-      WidgetTester tester,
-    ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
-
-      controller.recentCards.value = <StreamScanCardItem>[
-        StreamScanCardItem(
-          code: 'WATER',
-          title: 'Nước suối 500ml',
-          totalInCart: 3,
-          acceptedQuantity: 3,
+          code: '8935049510013',
           pendingQuantity: 1,
           timestamp: DateTime.now(),
         ),
@@ -116,82 +89,76 @@ void main() {
         _buildTestApp(StreamScanResultCardComponent(controller: controller)),
       );
 
-      expect(find.text('x3'), findsOneWidget);
-      expect(find.text('+1 đang xử lý'), findsOneWidget);
+      expect(
+        find.text(StreamScanConstants.defaultProcessingLabel),
+        findsOneWidget,
+      );
+      expect(find.text('8935049510013'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
       controller.dispose();
     });
 
-    testWidgets('stacks layers with the most recent scan in front', (
+    testWidgets('shows name, barcode and "+N" scanned quantity', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
-      // recentCards is ordered most recent first.
       controller.recentCards.value = <StreamScanCardItem>[
-        StreamScanCardItem(code: 'NEWEST', timestamp: DateTime.now()),
-        StreamScanCardItem(code: 'MIDDLE', timestamp: DateTime.now()),
-        StreamScanCardItem(code: 'OLDEST', timestamp: DateTime.now()),
+        StreamScanCardItem(
+          code: '8935049510013',
+          title: 'Sữa tươi Vinamilk 100% hộp 1L',
+          totalInCart: 7,
+          acceptedQuantity: 2,
+          timestamp: DateTime.now(),
+        ),
       ];
 
       await tester.pumpWidget(
         _buildTestApp(StreamScanResultCardComponent(controller: controller)),
       );
 
-      final List<AnimatedPositioned> layers = tester
-          .widgetList<AnimatedPositioned>(find.byType(AnimatedPositioned))
-          .toList();
-      expect(layers.length, 3);
-
-      // Painted back to front: the newest layer is the last child.
-      expect(layers.last.key, const ValueKey<String>('layer_NEWEST'));
-      expect(layers.first.key, const ValueKey<String>('layer_OLDEST'));
-
-      // Front layer anchored lowest and full width; older layers peek above.
-      const double offset = StreamScanConstants.layerOffsetY;
-      expect(layers.last.top, 2 * offset);
-      expect(layers.last.left, 0.0);
-      expect(layers.first.top, 0.0);
-      expect(layers.first.left, 2 * StreamScanConstants.layerInsetX);
+      expect(find.text('Sữa tươi Vinamilk 100% hộp 1L'), findsOneWidget);
+      expect(find.text('8935049510013'), findsOneWidget);
+      // Badge is the session scan count, not the cart total.
+      expect(find.text('+2'), findsOneWidget);
+      expect(find.text('+7'), findsNothing);
 
       controller.dispose();
     });
 
-    testWidgets('renders up to maxVisibleCards items', (
+    testWidgets('shows only the most recent product on the card', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        options: const StreamScanOptions(maxVisibleCards: 2),
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       controller.recentCards.value = <StreamScanCardItem>[
-        StreamScanCardItem(code: 'C_1', timestamp: DateTime.now()),
-        StreamScanCardItem(code: 'C_2', timestamp: DateTime.now()),
-        StreamScanCardItem(code: 'C_3', timestamp: DateTime.now()),
+        StreamScanCardItem(
+          code: 'NEWEST',
+          title: 'Newest',
+          acceptedQuantity: 1,
+          timestamp: DateTime.now(),
+        ),
+        StreamScanCardItem(
+          code: 'OLDER',
+          title: 'Older',
+          acceptedQuantity: 1,
+          timestamp: DateTime.now(),
+        ),
       ];
 
       await tester.pumpWidget(
         _buildTestApp(StreamScanResultCardComponent(controller: controller)),
       );
 
-      expect(find.text('C_1'), findsOneWidget);
-      expect(find.text('C_2'), findsOneWidget);
-      expect(find.text('C_3'), findsNothing);
+      expect(find.text('Newest'), findsOneWidget);
+      expect(find.text('Older'), findsNothing);
 
       controller.dispose();
     });
 
     testWidgets('supports customBuilder override', (WidgetTester tester) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       controller.recentCards.value = <StreamScanCardItem>[
         StreamScanCardItem(
@@ -218,38 +185,56 @@ void main() {
     });
   });
 
-  group('StreamScanErrorChipComponent', () {
-    testWidgets('renders SizedBox.shrink when errorChips is empty', (
+  group('StreamScanCounterComponent', () {
+    testWidgets('shows distinct items and total quantity', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
+      final StreamScanController controller = _acceptingController();
+
+      await tester.pumpWidget(
+        _buildTestApp(StreamScanCounterComponent(controller: controller)),
       );
+      expect(find.text('0'), findsNWidgets(2));
+
+      for (final String code in <String>['A', 'A', 'B']) {
+        controller.dispatcher.dispatch(StreamScanRequest(code: code));
+        await tester.pump();
+      }
+      await tester.pump();
+
+      expect(find.text('2'), findsOneWidget);
+      expect(find.text('3'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 1));
+      controller.dispose();
+    });
+  });
+
+  group('StreamScanErrorChipComponent', () {
+    testWidgets('renders nothing when there are no chips', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
 
       await tester.pumpWidget(
         _buildTestApp(StreamScanErrorChipComponent(controller: controller)),
       );
 
-      expect(find.byType(StreamScanErrorChipComponent), findsOneWidget);
-      expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+      expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
 
       controller.dispose();
     });
 
-    testWidgets('renders error chip with message without retry button', (
+    testWidgets('renders the host message only, without retry button', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       controller.errorChips.value = <StreamScanErrorChipItem>[
         StreamScanErrorChipItem(
           id: 'chip_1',
           code: 'ERR_1',
-          message: 'Không tìm thấy mã',
+          message: 'Mã không hợp lệ',
           unaddedQuantity: 2,
           timestamp: DateTime.now(),
         ),
@@ -259,15 +244,37 @@ void main() {
         _buildTestApp(StreamScanErrorChipComponent(controller: controller)),
       );
 
-      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
-      expect(
-        find.text(
-          '⚠ Không tìm thấy mã · 2 SP (ERR_1) chưa thêm vào giỏ, hãy quét lại',
+      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+      expect(find.text('Mã không hợp lệ'), findsOneWidget);
+      expect(find.byType(TextButton), findsNothing);
+
+      controller.dispose();
+    });
+
+    testWidgets('renders info chips with the info icon', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+
+      controller.errorChips.value = <StreamScanErrorChipItem>[
+        StreamScanErrorChipItem(
+          id: 'info_1',
+          code: '',
+          message: StreamScanConstants.continuousOnMessage,
+          kind: StreamScanChipKind.info,
+          timestamp: DateTime.now(),
         ),
+      ];
+
+      await tester.pumpWidget(
+        _buildTestApp(StreamScanErrorChipComponent(controller: controller)),
+      );
+
+      expect(find.byIcon(Icons.info_outline_rounded), findsOneWidget);
+      expect(
+        find.text(StreamScanConstants.continuousOnMessage),
         findsOneWidget,
       );
-      // No retry button should be present.
-      expect(find.byType(TextButton), findsNothing);
 
       controller.dispose();
     });
@@ -275,17 +282,13 @@ void main() {
     testWidgets('supports error chip customBuilder', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       controller.errorChips.value = <StreamScanErrorChipItem>[
         StreamScanErrorChipItem(
           id: 'chip_cb',
           code: 'CODE_X',
           message: 'Error custom',
-          unaddedQuantity: 1,
           timestamp: DateTime.now(),
         ),
       ];
@@ -294,10 +297,7 @@ void main() {
         _buildTestApp(
           StreamScanErrorChipComponent(
             controller: controller,
-            customBuilder: (
-              BuildContext context,
-              StreamScanErrorChipItem item,
-            ) {
+            customBuilder: (BuildContext context, StreamScanErrorChipItem item) {
               return Text('CustomChip: ${item.code}');
             },
           ),
@@ -314,10 +314,7 @@ void main() {
     testWidgets('renders SizedBox.shrink when isNetworkSlow is false', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       await tester.pumpWidget(
         _buildTestApp(StreamScanSlowNetworkComponent(controller: controller)),
@@ -332,10 +329,7 @@ void main() {
     testWidgets('renders slow network indicator when isNetworkSlow is true', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       controller.isNetworkSlow.value = true;
 
@@ -355,10 +349,7 @@ void main() {
     testWidgets('supports slow network customBuilder', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
-      );
+      final StreamScanController controller = _acceptingController();
 
       controller.isNetworkSlow.value = true;
 
@@ -380,64 +371,98 @@ void main() {
   });
 
   group('StreamScanPage', () {
-    testWidgets('renders page structure and finish button pops', (
+    testWidgets('shows spec layout: toggle, counter, empty card, finish', (
       WidgetTester tester,
     ) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
+      final StreamScanController controller = _acceptingController();
+      await _openPage(tester, controller);
+
+      expect(
+        find.text(StreamScanConstants.continuousToggleLabel),
+        findsOneWidget,
       );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (BuildContext context) {
-              return ElevatedButton(
-                onPressed: () async {
-                  await Navigator.of(context).push<void>(
-                    MaterialPageRoute<void>(
-                      builder: (BuildContext ctx) => StreamScanPage(
-                        controller: controller,
-                        onScan: (StreamScanRequest req) async =>
-                            const StreamScanResponse.accept(),
-                      ),
-                    ),
-                  );
-                },
-                child: const Text('Mở Scanner'),
-              );
-            },
-          ),
-        ),
-      );
-
-      // Open scanner page.
-      await tester.tap(find.text('Mở Scanner'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-
-      expect(find.byType(StreamScanPage), findsOneWidget);
+      expect(find.byType(StreamScanCounterComponent), findsOneWidget);
+      expect(find.text(StreamScanConstants.emptyCardLabel), findsOneWidget);
       expect(
         find.text(StreamScanConstants.defaultFinishButtonText),
         findsOneWidget,
       );
 
-      // Tap finish button.
-      await tester.tap(
-        find.text(StreamScanConstants.defaultFinishButtonText),
-      );
+      controller.dispose();
+    });
+
+    testWidgets('finish button pops with discarded = false', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+      final List<bool?> results = await _openPage(tester, controller);
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'P1'));
+      await tester.pump();
+
+      await tester.tap(find.text(StreamScanConstants.defaultFinishButtonText));
       await tester.pumpAndSettle();
 
       expect(find.byType(StreamScanPage), findsNothing);
+      expect(results, <bool?>[false]);
 
       controller.dispose();
     });
 
-    testWidgets('back button pops', (WidgetTester tester) async {
-      final StreamScanController controller = StreamScanController(
-        onScan: (StreamScanRequest req) async =>
-            const StreamScanResponse.accept(),
+    testWidgets('back without scanned items leaves without asking', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+      final List<bool?> results = await _openPage(tester, controller);
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('stream_scan_back_btn')),
       );
+      await tester.pumpAndSettle();
+
+      expect(find.text(StreamScanConstants.exitConfirmTitle), findsNothing);
+      expect(find.byType(StreamScanPage), findsNothing);
+      expect(results, <bool?>[false]);
+
+      controller.dispose();
+    });
+
+    testWidgets('back after scanning asks; "Ở lại" keeps the screen', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+      final List<bool?> results = await _openPage(tester, controller);
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'P1'));
+      await tester.pump();
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('stream_scan_back_btn')),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(StreamScanConstants.exitConfirmTitle), findsOneWidget);
+      // Counting is paused while the dialog is open.
+      expect(controller.presenceTracker.isPaused, isTrue);
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('stream_scan_exit_stay')),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text(StreamScanConstants.exitConfirmTitle), findsNothing);
+      expect(find.byType(StreamScanPage), findsOneWidget);
+      expect(controller.presenceTracker.isPaused, isFalse);
+      expect(results, isEmpty);
+
+      await tester.tap(find.text(StreamScanConstants.defaultFinishButtonText));
+      await tester.pumpAndSettle();
+      controller.dispose();
+    });
+
+    testWidgets('confirmed exit via scanStream returns isDiscarded', (
+      WidgetTester tester,
+    ) async {
+      StreamScanSession? session;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -445,39 +470,44 @@ void main() {
             builder: (BuildContext context) {
               return ElevatedButton(
                 onPressed: () async {
-                  await Navigator.of(context).push<void>(
-                    MaterialPageRoute<void>(
-                      builder: (BuildContext ctx) => StreamScanPage(
-                        controller: controller,
-                        onScan: (StreamScanRequest req) async =>
-                            const StreamScanResponse.accept(),
-                      ),
-                    ),
+                  session = await SmartScanner.scanStream(
+                    context,
+                    onScan: (StreamScanRequest req) async =>
+                        const StreamScanResponse.accept(),
                   );
                 },
-                child: const Text('Mở Scanner'),
+                child: const Text('Mở scanStream'),
               );
             },
           ),
         ),
       );
-
-      // Open scanner page.
-      await tester.tap(find.text('Mở Scanner'));
+      await tester.tap(find.text('Mở scanStream'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.byType(StreamScanPage), findsOneWidget);
+      final StreamScanPageState state = tester.state<StreamScanPageState>(
+        find.byType(StreamScanPage),
+      );
+      state.controller.dispatcher.dispatch(
+        const StreamScanRequest(code: 'P1', quantity: 2),
+      );
+      await tester.pump();
 
-      // Tap back button overlay in top bar.
       await tester.tap(
         find.byKey(const ValueKey<String>('stream_scan_back_btn')),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('stream_scan_exit_leave')),
       );
       await tester.pumpAndSettle();
 
       expect(find.byType(StreamScanPage), findsNothing);
-
-      controller.dispose();
+      expect(session, isNotNull);
+      expect(session!.isDiscarded, isTrue);
+      final StreamScanSummary summary = await session!.drained;
+      expect(summary.acceptedByCode, <String, int>{'P1': 2});
     });
 
     testWidgets(
@@ -513,8 +543,9 @@ void main() {
         expect(find.byType(StreamScanPage), findsOneWidget);
 
         // Access the state's controller and dispatch a scan so onScan runs.
-        final StreamScanPageState state =
-            tester.state<StreamScanPageState>(find.byType(StreamScanPage));
+        final StreamScanPageState state = tester.state<StreamScanPageState>(
+          find.byType(StreamScanPage),
+        );
         final StreamScanController pageController = state.controller;
         pageController.dispatcher.dispatch(
           const StreamScanRequest(code: 'PENDING_1', quantity: 2),
@@ -522,13 +553,17 @@ void main() {
         await tester.pump();
 
         // Close route with Navigator.pop(context) without passing any result.
-        final BuildContext pageContext = tester.element(find.byType(StreamScanPage));
+        final BuildContext pageContext = tester.element(
+          find.byType(StreamScanPage),
+        );
         Navigator.of(pageContext).pop();
         await tester.pumpAndSettle();
 
         // Screen is closed and session was returned by SmartScanner.scanStream.
         expect(find.byType(StreamScanPage), findsNothing);
         expect(capturedSession, isNotNull);
+        // Host-initiated close is not a user discard.
+        expect(capturedSession!.isDiscarded, isFalse);
 
         // drained MUST NOT be completed yet because onScan is still awaiting completer!
         bool isDrainedDone = false;
@@ -549,6 +584,7 @@ void main() {
         expect(isDrainedDone, isTrue);
         expect(summary.acceptedQuantity, 2);
         expect(summary.notAddedQuantity, 0);
+        expect(summary.acceptedByCode, <String, int>{'PENDING_1': 2});
       },
     );
   });

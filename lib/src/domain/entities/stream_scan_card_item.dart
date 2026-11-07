@@ -26,6 +26,9 @@ class StreamScanCardItem {
   /// Optional item count in cart from the latest accept response.
   final int? totalInCart;
 
+  /// Optional product thumbnail URL from the latest accept response.
+  final String? imageUrl;
+
   /// Scans counted but not yet answered by the host (in-flight or queued).
   final int pendingQuantity;
 
@@ -42,6 +45,7 @@ class StreamScanCardItem {
     this.title,
     this.subtitle,
     this.totalInCart,
+    this.imageUrl,
     this.pendingQuantity = 0,
     this.acceptedQuantity = 0,
     required this.timestamp,
@@ -71,6 +75,7 @@ class StreamScanCardItem {
     String? title,
     String? subtitle,
     int? totalInCart,
+    String? imageUrl,
     int? pendingQuantity,
     int? acceptedQuantity,
     DateTime? timestamp,
@@ -81,6 +86,7 @@ class StreamScanCardItem {
       title: title ?? this.title,
       subtitle: subtitle ?? this.subtitle,
       totalInCart: totalInCart ?? this.totalInCart,
+      imageUrl: imageUrl ?? this.imageUrl,
       pendingQuantity: pendingQuantity ?? this.pendingQuantity,
       acceptedQuantity: acceptedQuantity ?? this.acceptedQuantity,
       timestamp: timestamp ?? this.timestamp,
@@ -88,12 +94,21 @@ class StreamScanCardItem {
   }
 }
 
-/// Presentation item representing an error chip in the UI.
+/// Kind of toast chip shown above the scan frame.
+enum StreamScanChipKind {
+  /// Red toast for a rejected scan.
+  error,
+
+  /// Neutral toast, e.g. when the continuous-scan toggle changes.
+  info,
+}
+
+/// Presentation item for a toast chip shown above the scan frame.
 class StreamScanErrorChipItem {
   /// Unique identifier for this error chip.
   final String id;
 
-  /// Barcode string value that triggered the error.
+  /// Barcode string value that triggered the error (empty for info chips).
   final String code;
 
   /// Error message to display to the user.
@@ -101,6 +116,9 @@ class StreamScanErrorChipItem {
 
   /// Number of scanned items not added to cart.
   final int unaddedQuantity;
+
+  /// Whether this chip reports an error or neutral information.
+  final StreamScanChipKind kind;
 
   /// Timestamp when this error chip was created.
   final DateTime timestamp;
@@ -111,8 +129,12 @@ class StreamScanErrorChipItem {
     required this.code,
     required this.message,
     this.unaddedQuantity = 1,
+    this.kind = StreamScanChipKind.error,
     required this.timestamp,
   });
+
+  /// Whether this chip reports a rejected scan.
+  bool get isError => kind == StreamScanChipKind.error;
 
   /// Creates a copy with optional updated fields.
   StreamScanErrorChipItem copyWith({
@@ -120,6 +142,7 @@ class StreamScanErrorChipItem {
     String? code,
     String? message,
     int? unaddedQuantity,
+    StreamScanChipKind? kind,
     DateTime? timestamp,
   }) {
     return StreamScanErrorChipItem(
@@ -127,7 +150,41 @@ class StreamScanErrorChipItem {
       code: code ?? this.code,
       message: message ?? this.message,
       unaddedQuantity: unaddedQuantity ?? this.unaddedQuantity,
+      kind: kind ?? this.kind,
       timestamp: timestamp ?? this.timestamp,
     );
   }
+}
+
+/// Session counter shown as "Mặt hàng: N | Số lượng: M".
+class StreamScanCounter {
+  /// Distinct products accepted in this session.
+  final int itemCount;
+
+  /// Total accepted quantity of all products in this session.
+  final int totalQuantity;
+
+  /// Creates a session counter value.
+  const StreamScanCounter({this.itemCount = 0, this.totalQuantity = 0});
+
+  @override
+  bool operator ==(Object other) =>
+      other is StreamScanCounter &&
+      other.itemCount == itemCount &&
+      other.totalQuantity == totalQuantity;
+
+  @override
+  int get hashCode => Object.hash(itemCount, totalQuantity);
+}
+
+/// Momentary color flash of the scan frame after a result.
+enum StreamScanFrameFlash {
+  /// Normal white frame.
+  none,
+
+  /// Green flash after an accepted scan.
+  success,
+
+  /// Red border after a rejected scan.
+  error,
 }

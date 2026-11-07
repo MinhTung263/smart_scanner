@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:smart_scanner/src/core/constants/stream_scan_constants.dart';
 import 'package:smart_scanner/src/data/services/stream_vibration_service.dart';
 import 'package:smart_scanner/src/domain/entities/stream_frame_report.dart';
 import 'package:smart_scanner/src/domain/entities/stream_scan_card_item.dart';
@@ -192,6 +193,129 @@ void main() {
       // No totalInCart from host: fall back to the session count.
       expect(front.displayQuantity, 2);
 
+      controller.dispose();
+    });
+
+    testWidgets('counter counts distinct accepted products and quantity', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        onScan: (StreamScanRequest req) async => req.code == 'BAD'
+            ? const StreamScanResponse.reject('Không tìm thấy')
+            : const StreamScanResponse.accept(),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      for (final String code in <String>['A', 'A', 'B', 'BAD']) {
+        controller.dispatcher.dispatch(StreamScanRequest(code: code));
+        await tester.pump();
+      }
+
+      expect(controller.counter.value.itemCount, 2);
+      expect(controller.counter.value.totalQuantity, 3);
+
+      await tester.pump(const Duration(seconds: 6));
+      controller.dispose();
+    });
+
+    testWidgets('scan frame flashes green on accept and red on reject', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        onScan: (StreamScanRequest req) async => req.code == 'BAD'
+            ? const StreamScanResponse.reject('Mã không hợp lệ')
+            : const StreamScanResponse.accept(),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'OK'));
+      await tester.pump();
+      expect(controller.frameFlash.value, StreamScanFrameFlash.success);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(controller.frameFlash.value, StreamScanFrameFlash.none);
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'BAD'));
+      await tester.pump();
+      expect(controller.frameFlash.value, StreamScanFrameFlash.error);
+
+      await tester.pump(const Duration(seconds: 6));
+      controller.dispose();
+    });
+
+    testWidgets('toggle off pauses after one accepted code until tap', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        onScan: (StreamScanRequest req) async =>
+            const StreamScanResponse.accept(),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.setContinuousMode(false);
+      expect(controller.isContinuous.value, isFalse);
+      expect(
+        controller.errorChips.value.first.message,
+        StreamScanConstants.continuousOffMessage,
+      );
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'A'));
+      await tester.pump();
+
+      expect(controller.isWaitingForTap.value, isTrue);
+      expect(controller.presenceTracker.isPaused, isTrue);
+
+      // "Chạm để quét tiếp" resumes counting.
+      controller.continueScanning();
+      expect(controller.isWaitingForTap.value, isFalse);
+      expect(controller.presenceTracker.isPaused, isFalse);
+
+      await tester.pump(const Duration(seconds: 3));
+      controller.dispose();
+    });
+
+    testWidgets('toggle off: a rejected code does not pause scanning', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        onScan: (StreamScanRequest req) async =>
+            const StreamScanResponse.reject('Không tìm thấy'),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.setContinuousMode(false);
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'X'));
+      await tester.pump();
+
+      expect(controller.isWaitingForTap.value, isFalse);
+      expect(controller.presenceTracker.isPaused, isFalse);
+
+      await tester.pump(const Duration(seconds: 6));
+      controller.dispose();
+    });
+
+    testWidgets('turning the toggle back on clears the single-mode pause', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        onScan: (StreamScanRequest req) async =>
+            const StreamScanResponse.accept(),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.setContinuousMode(false);
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'A'));
+      await tester.pump();
+      expect(controller.isWaitingForTap.value, isTrue);
+
+      controller.setContinuousMode(true);
+      expect(controller.isWaitingForTap.value, isFalse);
+      expect(controller.presenceTracker.isPaused, isFalse);
+      expect(
+        controller.errorChips.value.first.message,
+        StreamScanConstants.continuousOnMessage,
+      );
+
+      await tester.pump(const Duration(seconds: 3));
       controller.dispose();
     });
 

@@ -8,7 +8,8 @@ import '../controllers/stream_scan_controller.dart';
 typedef StreamScanErrorChipBuilder =
     Widget Function(BuildContext context, StreamScanErrorChipItem item);
 
-/// Displays error alert chips for rejected barcode scans.
+/// Toast chips shown above the scan frame: red for errors, dark for info.
+/// Shows the host message only, newest first, up to `maxVisibleChips`.
 class StreamScanErrorChipComponent extends StatelessWidget {
   /// Controller supplying reactive error chip state.
   final StreamScanController controller;
@@ -34,17 +35,17 @@ class StreamScanErrorChipComponent extends StatelessWidget {
           }
 
           final int limit = controller.options.maxVisibleChips;
-          final List<StreamScanErrorChipItem> visibleChips =
-              chips.take(limit).toList();
+          final List<StreamScanErrorChipItem> visibleChips = chips
+              .take(limit)
+              .toList();
 
           return Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: visibleChips.map((StreamScanErrorChipItem item) {
               if (customBuilder != null) {
                 return customBuilder!(context, item);
               }
-              return _buildDefaultChip(context, item);
+              return _buildDefaultChip(item);
             }).toList(),
           );
         },
@@ -52,49 +53,44 @@ class StreamScanErrorChipComponent extends StatelessWidget {
     );
   }
 
-  Widget _buildDefaultChip(BuildContext context, StreamScanErrorChipItem item) {
-    const Color errorColor = Color(StreamScanConstants.errorColorValue);
-
-    final String displayText =
-        '⚠ ${item.message} · ${item.unaddedQuantity} SP (${item.code}) ${StreamScanConstants.defaultUnaddedSuffix}';
-
+  Widget _buildDefaultChip(StreamScanErrorChipItem item) {
+    final bool isError = item.isError;
     return Container(
       key: ValueKey<String>('chip_${item.id}'),
       margin: const EdgeInsets.only(
         bottom: StreamScanConstants.defaultItemSpacing,
       ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: StreamScanConstants.defaultComponentPadding,
-        vertical: 10.0,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 9.0),
       decoration: BoxDecoration(
-        color: const Color(StreamScanConstants.cardBackgroundColorValue),
+        color: isError
+            ? const Color(StreamScanConstants.errorColorValue)
+            : const Color(
+                StreamScanConstants.cardBackgroundColorValue,
+              ).withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(
           StreamScanConstants.defaultChipBorderRadius,
         ),
-        border: Border.all(
-          color: errorColor.withValues(alpha: 0.5),
-          width: 1.0,
-        ),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          const Icon(
-            Icons.warning_amber_rounded,
-            color: errorColor,
-            size: 20.0,
+          Icon(
+            isError ? Icons.error_outline_rounded : Icons.info_outline_rounded,
+            color: Colors.white,
+            size: 18.0,
           ),
           const SizedBox(width: StreamScanConstants.defaultItemSpacing),
-          Expanded(
+          Flexible(
             child: Text(
-              displayText,
+              item.message,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 12.0,
-                fontWeight: FontWeight.w500,
+                fontSize: 13.0,
+                fontWeight: FontWeight.w600,
               ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
             ),
           ),
         ],

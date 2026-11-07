@@ -18,14 +18,25 @@ abstract final class StreamScanConstants {
   /// Duration before displaying slow network hint.
   static const Duration defaultSlowHintAfter = Duration(seconds: 3);
 
-  /// Maximum visible success or in-flight cards.
+  /// Number of most recent products published in `recentCards`.
   static const int defaultMaxVisibleCards = 3;
 
-  /// Maximum visible error chips.
-  static const int defaultMaxVisibleChips = 3;
+  /// Maximum toast chips visible at once (spec shows one at a time).
+  static const int defaultMaxVisibleChips = 1;
 
   /// Auto-hide duration for error chips.
   static const Duration defaultChipAutoHide = Duration(seconds: 5);
+
+  /// Auto-hide duration for info chips (continuous toggle toasts).
+  static const Duration infoChipAutoHide = Duration(seconds: 2);
+
+  /// Duration of the green or red scan-frame flash after a result.
+  static const Duration frameFlashDuration = Duration(milliseconds: 350);
+
+  /// Duration of one laser sweep across the scan frame.
+  static const Duration laserSweepDuration = Duration(milliseconds: 1800);
+
+  // ---- Texts ----
 
   /// Fallback error message when onScan fails.
   static const String defaultErrorMessage = 'Có lỗi xảy ra';
@@ -34,37 +45,50 @@ abstract final class StreamScanConstants {
   static const String defaultSlowNetworkMessage = 'Đang xử lý, mạng chậm...';
 
   /// Default text for finish button.
-  static const String defaultFinishButtonText = 'Hoàn tất';
+  static const String defaultFinishButtonText = 'Hoàn thành';
 
-  /// Default label for processing card item.
+  /// Default label for a product still being looked up.
   static const String defaultProcessingLabel = 'Đang xử lý...';
 
-  /// Prefix of the quantity badge on a product layer (e.g. "x3").
-  static const String layerQuantityPrefix = 'x';
+  /// Card text before any product has been scanned.
+  static const String emptyCardLabel = 'Chưa quét mã nào';
 
-  /// Suffix for scans of a layer still awaiting the host (e.g. "+1 đang xử lý").
-  static const String layerPendingSuffix = 'đang xử lý';
+  /// Prefix of the scanned quantity badge (e.g. "+2").
+  static const String quantityBadgePrefix = '+';
 
-  /// Fixed height of each product layer card.
-  static const double layerCardHeight = 72.0;
+  /// Label of the continuous scan toggle.
+  static const String continuousToggleLabel = 'Quét liên tục';
 
-  /// Vertical peek of each layer behind the front card.
-  static const double layerOffsetY = 10.0;
+  /// Info toast when continuous scanning is turned on.
+  static const String continuousOnMessage = 'Đã bật quét liên tục';
 
-  /// Horizontal inset added per layer depth behind the front card.
-  static const double layerInsetX = 14.0;
+  /// Info toast when continuous scanning is turned off.
+  static const String continuousOffMessage =
+      'Đã tắt quét liên tục, quét xong 1 mã sẽ tạm dừng';
 
-  /// Duration of the layer re-order animation.
-  static const Duration layerAnimationDuration = Duration(milliseconds: 500);
+  /// Overlay text while paused after one code in single mode.
+  static const String tapToContinueLabel = 'Chạm để quét tiếp';
 
-  /// Blur radius of the light shadow under each layer.
-  static const double layerShadowBlur = 8.0;
+  /// Counter label for distinct products.
+  static const String counterItemsLabel = 'Mặt hàng:';
 
-  /// Quantity badge color hex value.
-  static const int layerQuantityColorValue = 0xFF60A5FA;
+  /// Counter label for total quantity.
+  static const String counterQuantityLabel = 'Số lượng:';
 
-  /// Default suffix message for unadded items.
-  static const String defaultUnaddedSuffix = 'chưa thêm vào giỏ, hãy quét lại';
+  /// Exit confirmation dialog title.
+  static const String exitConfirmTitle = 'Thoát màn quét?';
+
+  /// Exit confirmation dialog message.
+  static const String exitConfirmMessage =
+      'Các sản phẩm đã quét sẽ bị bỏ khỏi giỏ hàng.';
+
+  /// Exit confirmation button that keeps scanning.
+  static const String exitConfirmStay = 'Ở lại';
+
+  /// Exit confirmation button that leaves and discards.
+  static const String exitConfirmLeave = 'Thoát';
+
+  // ---- Vibration ----
 
   /// Vibration duration in milliseconds for success.
   static const int vibrationSuccessDurationMs = 70;
@@ -75,17 +99,48 @@ abstract final class StreamScanConstants {
   /// Pause duration in milliseconds between error pulses.
   static const int vibrationErrorPauseDurationMs = 80;
 
-  /// Success color hex value.
+  // ---- Colors ----
+
+  /// Success color hex value (finish button, frame flash, laser).
   static const int successColorValue = 0xFF10B981;
 
-  /// Error color hex value.
-  static const int errorColorValue = 0xFFEF4444;
+  /// Error color hex value (error toast, frame error border).
+  static const int errorColorValue = 0xFFE5534B;
 
   /// Warning color hex value.
   static const int warningColorValue = 0xFFF59E0B;
 
-  /// Background card color hex value.
+  /// Dark surface color hex value (slow network, info toast).
   static const int cardBackgroundColorValue = 0xFF1C1C2E;
+
+  /// Laser line color hex value.
+  static const int laserColorValue = 0xFF34D399;
+
+  /// Toggle active track color hex value.
+  static const int toggleActiveColorValue = 0xFF2563EB;
+
+  /// Counter pill background color hex value.
+  static const int counterBackgroundColorValue = 0xCC1F2937;
+
+  /// Counter quantity value color hex value.
+  static const int counterQuantityColorValue = 0xFFFBBF24;
+
+  /// Product card surface color hex value.
+  static const int productCardColorValue = 0xFFFFFFFF;
+
+  /// Product name text color hex value.
+  static const int productTitleColorValue = 0xFF111827;
+
+  /// Barcode text color hex value.
+  static const int productSubtitleColorValue = 0xFF9CA3AF;
+
+  /// Quantity badge background color hex value.
+  static const int badgeBackgroundColorValue = 0xFFE0E7FF;
+
+  /// Quantity badge text color hex value.
+  static const int badgeTextColorValue = 0xFF2563EB;
+
+  // ---- Sizes ----
 
   /// Default component horizontal and vertical padding.
   static const double defaultComponentPadding = 16.0;
@@ -101,4 +156,25 @@ abstract final class StreamScanConstants {
 
   /// Default scan window size ratio.
   static const double defaultScanWindowRatio = 0.85;
+
+  /// Height of the scanned product card.
+  static const double productCardHeight = 64.0;
+
+  /// Product thumbnail size.
+  static const double thumbnailSize = 48.0;
+
+  /// Number of decorative layers stacked under the product card.
+  static const int decorativeLayerCount = 3;
+
+  /// Vertical step of each decorative layer below the card.
+  static const double decorativeLayerOffsetY = 5.0;
+
+  /// Horizontal inset added per decorative layer.
+  static const double decorativeLayerInsetX = 10.0;
+
+  /// Height reserved for the top bar under the safe area.
+  static const double topBarHeight = 58.0;
+
+  /// Gap between the scan frame and widgets placed below it.
+  static const double belowFrameGap = 14.0;
 }
