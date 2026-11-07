@@ -6,6 +6,7 @@ A high-performance, battery & heat-optimized Flutter package for Barcode and QR 
 
 ## Key Features
 
+- ⚡ **Stream Scanning Mode (POS Realtime)**: Continuous barcode scanning with instant async callback, intelligent frame-exit deduplication (`RescanPolicy.leaveFrame`), request batch aggregation, and non-blocking background queue drain.
 - ⚡ **High-Performance Scanning**: Powered by Google ML Kit with zero-allocation memory buffers (50+ FPS active UI performance).
 - ❄️ **Battery & Thermal Efficiency**:
   - **720p Optimized Stream**: Cuts pixel processing and memory channel transfer load by >50%.
@@ -111,6 +112,57 @@ To force vibration on or off for a single scan regardless of the setting, pass
 
 ```dart
 final result = await SmartScanner.scanBarcode(context, enableVibration: false);
+```
+
+### 5. Stream Scanning Mode (Realtime POS / Continuous Checkout)
+
+Designed for POS cashier scanning, inventory intake, and continuous barcode dispatch. In this mode, barcodes are streamed to your backend / cache handler immediately in real-time, while the scanner keeps processing new codes without blocking.
+
+#### Key Mechanisms
+- **`RescanPolicy.leaveFrame`**: An item is only counted once while held in the frame. To be scanned again, it must physically exit the scan frame for a configurable number of missed frames (`missedFrames: 2` by default) before being recognized as a subsequent item.
+- **Batch Aggregation & Sequential Dispatch**: While an asynchronous request for barcode `X` is in flight, any subsequent counts of barcode `X` are automatically aggregated into `quantity`. Calls for the same barcode are processed sequentially, preventing race conditions.
+- **Concurrency Limiting**: Supports parallel processing for different barcodes (default `maxConcurrent: 2`).
+- **Error Feedback & Rescan**: When `onScan` returns `StreamScanResponse.reject(msg)`, the app vibrates with 2 pulses, displays an auto-dismissing error chip with the exact count of items not added (`req.quantity + queued`), and cancels in-flight pending scans for that barcode so cashiers can re-scan immediately without cooldown or race conditions.
+- **Layered Product Cards**: Scanned products appear as stacked layers above the finish button (up to `maxVisibleCards`, default 3), most recent scan in front. A product scanned for the first time adds a new layer; re-scanning a product already in the session slides its layer to the front and, once `onScan` accepts it, shows the new quantity (`totalInCart` from your response, or the session's accepted count if you don't return one). If a re-scan of a product that is already in the cart is rejected, its layer stays at the previous quantity and only the error chip is shown; a product that was never accepted has its layer removed.
+- **Background Drain**: When the user taps "Hoàn tất" or navigates back, `await session.drained` ensures all remaining background network requests finish before transitioning to payment, returning the final `StreamScanSummary` (`acceptedQuantity` and `notAddedQuantity`).
+
+#### Code Example
+
+```dart
+final StreamScanSession session = await SmartScanner.scanStream(
+  context,
+  onScan: (StreamScanRequest req) async {
+    // 1. Query POS cache or remote API
+    final Product? product = posCache.get(req.code) ?? await api.find(req.code);
+
+    if (product == null) {
+      return const StreamScanResponse.reject('Không tìm thấy sản phẩm');
+    }
+
+    // 2. Add to cart with aggregated quantity
+    final bool ok = cart.add(product, quantity: req.quantity);
+    if (!ok) {
+      return const StreamScanResponse.reject('Không đủ tồn kho');
+    }
+
+    // 3. Return accepted status with title, price subtitle, and cart count
+    return StreamScanResponse.accept(
+      title: product.name,
+      subtitle: '${product.price}đ',
+      totalInCart: cart.getQuantity(product),
+    );
+  },
+  options: const StreamScanOptions(
+    rescanPolicy: RescanPolicy.leaveFrame(missedFrames: 2),
+    maxCodesPerFrame: 1,
+    maxConcurrent: 2,
+    slowHintAfter: Duration(seconds: 3),
+  ),
+);
+
+// Await any remaining background tasks before navigating to payment:
+final StreamScanSummary summary = await session.drained;
+print('Accepted: ${summary.acceptedQuantity}, Not added: ${summary.notAddedQuantity}');
 ```
 
 ## License

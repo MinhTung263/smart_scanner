@@ -8,6 +8,7 @@ import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart
 
 import '../../data/services/barcode_scanner_service.dart';
 import '../../data/services/camera_service.dart';
+import '../../domain/entities/stream_frame_report.dart';
 import 'barcode_overlay_painter.dart';
 import 'glass_container.dart';
 
@@ -33,6 +34,12 @@ class CustomBarcodeScanner extends StatefulWidget {
   /// while the entrance UI (e.g. the guide frame animation) is still settling.
   final Duration detectionWarmupDelay;
 
+  /// Callback invoked on every processed frame with frame report.
+  final void Function(StreamFrameReport report)? onFrameProcessed;
+
+  /// Initial zoom level to apply when camera starts.
+  final double? initialZoom;
+
   const CustomBarcodeScanner({
     Key? key,
     required this.onDetect,
@@ -46,6 +53,8 @@ class CustomBarcodeScanner extends StatefulWidget {
     this.onWindowScaleUpdate,
     this.onZoomChanged,
     this.detectionWarmupDelay = Duration.zero,
+    this.onFrameProcessed,
+    this.initialZoom,
   }) : super(key: key);
 
   @override
@@ -171,6 +180,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
     WidgetsBinding.instance.addObserver(this);
     _lastActivityAtMs = _clock.elapsedMilliseconds;
     _lastUserActivityMs = _clock.elapsedMilliseconds;
+    _currentZoom = widget.initialZoom ?? CameraService.defaultZoomLevel;
     _startInactivityChecker();
 
     _detectionReadyAtMs =
@@ -228,6 +238,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       isDisposedCheck: () => !_canScan,
       onUpdateUI: _handleCameraUpdateUI,
       onZoomInitialized: _handleZoomInitialized,
+      initialZoom: widget.initialZoom,
     );
     if (!mounted || _isDisposed) return;
     final permissionDenied =
@@ -510,6 +521,13 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                 );
               }
             }
+
+            dispatchFrameReport(
+              filteredBarcodes: filteredBarcodes,
+              isBlurry: isBlurry,
+              hasGlare: hasGlare,
+              isMoving: isMoving,
+            );
           }
         }
       }
@@ -532,6 +550,26 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
       if (_nextProcessTime < now + throttleMs)
         _nextProcessTime = now + throttleMs;
       _isBusy = false;
+    }
+  }
+
+  /// Dispatches frame report callback if provided.
+  @visibleForTesting
+  void dispatchFrameReport({
+    required List<Barcode> filteredBarcodes,
+    required bool isBlurry,
+    required bool hasGlare,
+    required bool isMoving,
+  }) {
+    if (widget.onFrameProcessed != null) {
+      widget.onFrameProcessed!(
+        StreamFrameReport(
+          barcodes: filteredBarcodes,
+          isBlurry: isBlurry,
+          hasGlare: hasGlare,
+          isMoving: isMoving,
+        ),
+      );
     }
   }
 
@@ -659,7 +697,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
                     // opened with.
                     final controller = _cameraService.controller;
                     if (controller != null) {
-                      final double baseZoom = CameraService.defaultZoomLevel
+                      final double baseZoom = (widget.initialZoom ?? CameraService.defaultZoomLevel)
                           .clamp(_cameraService.minZoomLevel, _cameraService.maxZoomLevel);
                       final bool isAtBase = (_currentZoom - baseZoom).abs() < 0.05;
                       _currentZoom = isAtBase ? _cameraService.maxZoomLevel : baseZoom;

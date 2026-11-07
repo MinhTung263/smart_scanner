@@ -2,10 +2,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'data/services/camera_service.dart';
 import 'presentation/pages/smart_scanner_page.dart';
+import 'presentation/pages/stream_scan_page.dart';
+import 'presentation/components/stream_scan_result_card_component.dart';
+import 'presentation/components/stream_scan_error_chip_component.dart';
+import 'presentation/components/stream_scan_slow_network_component.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'domain/entities/smart_scanner_result.dart';
+import 'domain/entities/stream_scan_options.dart';
+import 'domain/entities/stream_scan_request.dart';
+import 'domain/entities/stream_scan_response.dart';
+import 'domain/usecases/stream_scan_dispatcher.dart';
 
 export 'domain/entities/smart_scanner_result.dart';
+export 'domain/entities/stream_scan_card_item.dart';
+export 'domain/entities/stream_scan_options.dart';
+export 'domain/entities/stream_scan_request.dart';
+export 'domain/entities/stream_scan_response.dart';
 
 /// A helper class to easily integrate Smart Scanner into any project.
 class SmartScanner {
@@ -385,5 +397,45 @@ class SmartScanner {
         ),
       ),
     );
+  }
+
+  /// Opens continuous barcode stream scanner with realtime POS callback.
+  /// Dispatches scanned codes to [onScan] and updates card and chip feedback.
+  /// Returns [StreamScanSession] with [StreamScanSession.drained] tracking background drain.
+  static Future<StreamScanSession> scanStream(
+    BuildContext context, {
+    required Future<StreamScanResponse> Function(StreamScanRequest request)
+    onScan,
+    StreamScanOptions options = const StreamScanOptions(),
+    bool? enableVibration,
+    StreamScanCardBuilder? cardBuilder,
+    StreamScanErrorChipBuilder? chipBuilder,
+    StreamScanSlowNetworkBuilder? slowNetworkBuilder,
+    Widget Function(BuildContext context, VoidCallback onFinish)?
+    finishButtonBuilder,
+  }) async {
+    // Warm up camera list before route transition starts.
+    CameraService.preloadCameras();
+
+    final StreamScanDispatcher dispatcher = StreamScanDispatcher(
+      onScan: onScan,
+      options: options,
+    );
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => StreamScanPage(
+          dispatcher: dispatcher,
+          options: options,
+          enableVibration: enableVibration,
+          cardBuilder: cardBuilder,
+          chipBuilder: chipBuilder,
+          slowNetworkBuilder: slowNetworkBuilder,
+          finishButtonBuilder: finishButtonBuilder,
+        ),
+      ),
+    );
+
+    return dispatcher.session;
   }
 }

@@ -1,3 +1,17 @@
+## 0.1.0
+
+- **Barcode Stream Scanning (Continuous POS Realtime Mode)**:
+  - Added `SmartScanner.scanStream` for continuous, high-throughput barcode scanning with real-time host callbacks (`onScan`).
+  - Added `RescanPolicy.leaveFrame` presence tracker preventing duplicate increments when items stay stationary in the scan window.
+  - Added sequential per-barcode queueing and quantity batch aggregation (`StreamScanDispatcher`) with `maxConcurrent` throttling.
+  - Added non-blocking background queue drain (`session.drained` returning `StreamScanSummary`) ensuring all in-flight requests finish cleanly after the screen closes.
+  - Built with pure Flutter reactive primitives (`ChangeNotifier`, `ValueNotifier`, `RepaintBoundary`) without third-party framework dependencies.
+  - Added `StreamScanResponse.accept` and `StreamScanResponse.reject` models with visual feedback cards and error chips.
+  - Scanned products are shown as stacked layers, most recent scan in front; re-scanning a product moves its layer to the front and updates its quantity, and a rejected re-scan of a product already in the cart keeps its layer at the previous quantity.
+  - Added double-haptic error vibration and single-haptic success vibration via `StreamVibrationService`.
+  - Added slow network warning indicator (`slowHintAfter`) without aborting or desynchronizing host requests.
+  - Added demo POS cashier screen with realtime API simulation in `smart_scanner_app`.
+
 ## 0.0.3
 
 - **Completion Celebration & Animation Effects**:

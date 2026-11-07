@@ -52,6 +52,97 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _startStreamScan() async {
+    final Map<String, int> cart = <String, int>{};
+    final Map<String, String> productNames = <String, String>{
+      '8934567890123': 'Cà phê G7 3in1',
+      '8931234567890': 'Sữa tươi Vinamilk 180ml',
+      '8939876543210': 'Mì Hảo Hảo Tôm Chua Cay',
+    };
+
+    final StreamScanSession session = await SmartScanner.scanStream(
+      context,
+      onScan: (StreamScanRequest req) async {
+        // Mô phỏng độ trễ mạng kiểm tra card đang xử lý
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        // Mô phỏng mã lỗi không tìm thấy
+        if (req.code.contains('999')) {
+          return const StreamScanResponse.reject(
+            'Không tìm thấy sản phẩm',
+          );
+        }
+
+        // Mô phỏng mã hợp lệ
+        final int currentQty = cart[req.code] ?? 0;
+        final int totalQty = currentQty + req.quantity;
+        cart[req.code] = totalQty;
+
+        final String title = productNames[req.code] ??
+            (req.code.startsWith('893')
+                ? 'Sản phẩm mẫu (${req.code})'
+                : 'Sản phẩm mẫu');
+
+        return StreamScanResponse.accept(
+          title: title,
+          subtitle: '50.000đ',
+          totalInCart: totalQty,
+        );
+      },
+    );
+
+    // Chờ hàng đợi nền xử lý xong các lượt quét còn lại
+    final StreamScanSummary summary = await session.drained;
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _scannedResults = cart.isNotEmpty ? cart : null;
+      _singleResult = null;
+    });
+
+    // Hiển thị dialog tóm tắt kết quả phiên quét
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Row(
+            children: <Widget>[
+              Icon(Icons.receipt_long, color: Color(0xFF4F46E5)),
+              SizedBox(width: 8),
+              Text(
+                'Tổng kết phiên quét',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('• Số lượng đã chấp nhận: ${summary.acceptedQuantity}'),
+              const SizedBox(height: 6),
+              Text('• Số lượng chưa thêm vào giỏ: ${summary.notAddedQuantity}'),
+              const SizedBox(height: 6),
+              Text('• Tổng mặt hàng trong giỏ: ${cart.length}'),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Đóng'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -124,6 +215,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: Color(0xFF1F2937),
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  _buildStreamScanCard(),
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -323,6 +416,99 @@ class _HomeScreenState extends State<HomeScreen> {
                 fontSize: 13,
                 overflow: TextOverflow.ellipsis,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStreamScanCard() {
+    return GestureDetector(
+      onTap: _startStreamScan,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: <Color>[Color(0xFF4F46E5), Color(0xFF06B6D4)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: const Color(0xFF4F46E5).withValues(alpha: 0.35),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: <Widget>[
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: const Icon(
+                Icons.point_of_sale_rounded,
+                color: Colors.white,
+                size: 36,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      const Text(
+                        'Quét Barcode Stream',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.amberAccent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          'POS Realtime',
+                          style: TextStyle(
+                            color: Colors.black87,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Quét liên tục không cần chờ, tra cache & gọi API realtime',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.arrow_forward_ios_rounded,
+              color: Colors.white70,
+              size: 16,
             ),
           ],
         ),

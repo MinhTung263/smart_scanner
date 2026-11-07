@@ -74,6 +74,7 @@ class CameraService {
     required bool Function() isDisposedCheck,
     required VoidCallback onUpdateUI,
     void Function(double zoom)? onZoomInitialized,
+    double? initialZoom,
   }) async {
     final sw = Stopwatch()..start();
     _isPermissionDenied = false;
@@ -133,6 +134,7 @@ class CameraService {
       onUpdateUI,
       onZoomInitialized,
       sw,
+      initialZoom,
     );
   }
 
@@ -142,6 +144,7 @@ class CameraService {
     VoidCallback onUpdateUI, [
     void Function(double zoom)? onZoomInitialized,
     Stopwatch? sw,
+    double? initialZoom,
   ]) async {
     if (isDisposedCheck()) return null;
 
@@ -200,7 +203,11 @@ class CameraService {
 
       await Future.wait([
         _ensureContinuousAutofocus(controller),
-        _applyDefaultZoom(controller, onZoomInitialized),
+        _applyDefaultZoom(
+          controller,
+          onZoomInitialized,
+          initialZoom: initialZoom,
+        ),
       ]);
       lap('focus + zoom');
 
@@ -219,6 +226,7 @@ class CameraService {
           isDisposedCheck,
           onUpdateUI,
           onZoomInitialized,
+          initialZoom,
         );
       }
 
@@ -258,6 +266,7 @@ class CameraService {
     bool Function() isDisposedCheck,
     VoidCallback onUpdateUI, [
     void Function(double zoom)? onZoomInitialized,
+    double? initialZoom,
   ]) async {
     if (isDisposedCheck()) return null;
 
@@ -293,7 +302,11 @@ class CameraService {
 
       await Future.wait([
         _ensureContinuousAutofocus(controller),
-        _applyDefaultZoom(controller, onZoomInitialized),
+        _applyDefaultZoom(
+          controller,
+          onZoomInitialized,
+          initialZoom: initialZoom,
+        ),
       ]);
 
       if (isDisposedCheck() || _controller != controller) return null;
@@ -309,9 +322,11 @@ class CameraService {
 
   Future<void> _applyDefaultZoom(
     CameraController controller,
-    void Function(double zoom)? onZoomInitialized,
-  ) async {
-    final zoom = defaultZoomLevel.clamp(minZoomLevel, maxZoomLevel);
+    void Function(double zoom)? onZoomInitialized, {
+    double? initialZoom,
+  }) async {
+    final double targetZoom = initialZoom ?? defaultZoomLevel;
+    final double zoom = targetZoom.clamp(minZoomLevel, maxZoomLevel);
     try {
       // A freshly created controller already starts at 1x, so skip the
       // native call in that case and only report the level to the UI.
