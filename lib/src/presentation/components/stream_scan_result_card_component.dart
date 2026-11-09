@@ -19,11 +19,15 @@ class StreamScanResultCardComponent extends StatelessWidget {
   /// Custom builder override for the content of the front card.
   final StreamScanCardBuilder? customBuilder;
 
+  /// Called when the front card is tapped (host opens the cart).
+  final VoidCallback? onTap;
+
   /// Creates a stream scan result card component.
   const StreamScanResultCardComponent({
     super.key,
     required this.controller,
     this.customBuilder,
+    this.onTap,
   });
 
   @override
@@ -55,11 +59,16 @@ class StreamScanResultCardComponent extends StatelessWidget {
                   left: 0.0,
                   right: 0.0,
                   height: StreamScanConstants.productCardHeight,
-                  child: customBuilder != null
-                      ? customBuilder!(context, front)
-                      : _buildCardShell(
-                          child: _buildProductContent(context, front),
-                        ),
+                  child: GestureDetector(
+                    key: const ValueKey<String>('stream_scan_card_tap'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onTap,
+                    child: customBuilder != null
+                        ? customBuilder!(context, front)
+                        : _buildCardShell(
+                            child: _buildProductContent(context, front),
+                          ),
+                  ),
                 ),
               ],
             ),

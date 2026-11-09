@@ -127,16 +127,27 @@ class StreamScanSummary {
       'StreamScanSummary(acceptedQuantity: $acceptedQuantity, notAddedQuantity: $notAddedQuantity, acceptedByCode: $acceptedByCode)';
 }
 
+/// How the user left the stream scan screen.
+enum StreamScanExitReason {
+  /// Back button or system back; the cart is kept as is.
+  back,
+
+  /// Tapped the scanned product card; the host should open the cart.
+  cardTap,
+}
+
 /// Active session tracking background processing drain status.
 class StreamScanSession {
   /// Future that completes when all background onScan calls finish.
   final Future<StreamScanSummary> drained;
 
-  /// True when the user left with "Thoát" after the exit confirmation.
-  /// Items were already added in realtime, so the host should remove
-  /// `acceptedByCode` from the cart after awaiting [drained].
-  final bool isDiscarded;
+  /// How the screen was closed; [StreamScanExitReason.back] when the host
+  /// closed it without a result.
+  final StreamScanExitReason exitReason;
 
   /// Creates a session referencing the drained future.
-  const StreamScanSession({required this.drained, this.isDiscarded = false});
+  const StreamScanSession({
+    required this.drained,
+    this.exitReason = StreamScanExitReason.back,
+  });
 }

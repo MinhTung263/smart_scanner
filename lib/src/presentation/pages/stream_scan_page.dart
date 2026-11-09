@@ -8,7 +8,6 @@ import '../../domain/entities/stream_scan_request.dart';
 import '../../domain/entities/stream_scan_response.dart';
 import '../../domain/usecases/stream_scan_dispatcher.dart';
 import '../components/stream_scan_continuous_toggle_component.dart';
-import '../components/stream_scan_counter_component.dart';
 import '../components/stream_scan_error_chip_component.dart';
 import '../components/stream_scan_result_card_component.dart';
 import '../components/stream_scan_slow_network_component.dart';
@@ -18,12 +17,8 @@ import '../widgets/scanner_controls.dart';
 import '../widgets/scanner_overlay.dart';
 import 'smart_scanner_page.dart';
 
-/// Asks the user to confirm leaving; `true` means leave and discard.
-typedef StreamScanExitConfirmBuilder =
-    Future<bool> Function(BuildContext context);
-
 /// Fullscreen stream scanning page (spec "Bán nhanh - Quét hàng loạt").
-/// Pops with `true` when the user confirmed leaving (discard), else `false`.
+/// Pops with a [StreamScanExitReason]: back, or a tap on the product card.
 class StreamScanPage extends StatefulWidget {
   /// Handler invoked for each detected barcode.
   final Future<StreamScanResponse> Function(StreamScanRequest request)? onScan;
@@ -48,13 +43,6 @@ class StreamScanPage extends StatefulWidget {
 
   /// Custom builder for slow network hint indicator.
   final StreamScanSlowNetworkBuilder? slowNetworkBuilder;
-
-  /// Custom builder for finish button.
-  final Widget Function(BuildContext context, VoidCallback onFinish)?
-  finishButtonBuilder;
-
-  /// Custom exit confirmation; defaults to a simple dialog.
-  final StreamScanExitConfirmBuilder? exitConfirmBuilder;
 
   /// Optional controller injection for testing.
   final StreamScanController? controller;
@@ -83,8 +71,6 @@ class StreamScanPage extends StatefulWidget {
     this.cardBuilder,
     this.chipBuilder,
     this.slowNetworkBuilder,
-    this.finishButtonBuilder,
-    this.exitConfirmBuilder,
     this.controller,
   }) : assert(
          dispatcher != null || onScan != null || controller != null,
@@ -110,7 +96,6 @@ class StreamScanPageState extends State<StreamScanPage> {
   bool _isTorchOn = false;
   double _currentZoom = 1.0;
   bool _isPopping = false;
-  bool _isConfirmingExit = false;
 
   @override
   void initState() {
@@ -121,10 +106,7 @@ class StreamScanPageState extends State<StreamScanPage> {
     } else {
       final StreamScanDispatcher dispatcher =
           widget.dispatcher ??
-          StreamScanDispatcher(
-            onScan: widget.onScan!,
-            options: widget.options,
-          );
+          StreamScanDispatcher(onScan: widget.onScan!, options: widget.options);
       _controller = StreamScanController(
         onScan: dispatcher.onScan,
         dispatcher: dispatcher,
@@ -143,71 +125,14 @@ class StreamScanPageState extends State<StreamScanPage> {
     super.dispose();
   }
 
-  void _finish() => _pop(discarded: false);
-
-  void _pop({required bool discarded}) {
+  /// Closes the screen at once; the cart is never touched here.
+  void _exit(StreamScanExitReason reason) {
     if (_isPopping) {
       return;
     }
     _isPopping = true;
     _scannerKey.currentState?.pauseCamera();
-    Navigator.of(context).pop(discarded);
-  }
-
-  /// Back button / system back: confirm first when something was scanned.
-  Future<void> _requestExit() async {
-    if (_isPopping || _isConfirmingExit) {
-      return;
-    }
-    if (!_controller.hasScannedItems) {
-      _pop(discarded: false);
-      return;
-    }
-
-    _isConfirmingExit = true;
-    _controller.pause();
-    final bool leave = widget.exitConfirmBuilder != null
-        ? await widget.exitConfirmBuilder!(context)
-        : await _showDefaultExitDialog();
-    _isConfirmingExit = false;
-    if (!mounted) {
-      return;
-    }
-    if (leave) {
-      _pop(discarded: true);
-    } else {
-      _controller.resume();
-    }
-  }
-
-  Future<bool> _showDefaultExitDialog() async {
-    final bool? leave = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: const Text(StreamScanConstants.exitConfirmTitle),
-          content: const Text(StreamScanConstants.exitConfirmMessage),
-          actions: <Widget>[
-            TextButton(
-              key: const ValueKey<String>('stream_scan_exit_stay'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text(StreamScanConstants.exitConfirmStay),
-            ),
-            TextButton(
-              key: const ValueKey<String>('stream_scan_exit_leave'),
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(
-                  StreamScanConstants.errorColorValue,
-                ),
-              ),
-              child: const Text(StreamScanConstants.exitConfirmLeave),
-            ),
-          ],
-        );
-      },
-    );
-    return leave ?? false;
+    Navigator.of(context).pop(reason);
   }
 
   Future<void> _toggleFlash() async {
@@ -232,13 +157,13 @@ class StreamScanPageState extends State<StreamScanPage> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope<bool>(
+    return PopScope<StreamScanExitReason>(
       canPop: false,
-      onPopInvokedWithResult: (bool didPop, bool? result) {
+      onPopInvokedWithResult: (bool didPop, StreamScanExitReason? result) {
         if (didPop) {
           return;
         }
-        _requestExit();
+        _exit(StreamScanExitReason.back);
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -298,7 +223,7 @@ class StreamScanPageState extends State<StreamScanPage> {
                     onZoomChangeEnd: _refocus,
                   ),
                 ),
-                // Intercepts the top bar back button so exit can be confirmed.
+                // Routes the top bar back button through [_exit].
                 Positioned(
                   top: 0.0,
                   left: 0.0,
@@ -311,7 +236,7 @@ class StreamScanPageState extends State<StreamScanPage> {
                       child: GestureDetector(
                         key: const ValueKey<String>('stream_scan_back_btn'),
                         behavior: HitTestBehavior.opaque,
-                        onTap: _requestExit,
+                        onTap: () => _exit(StreamScanExitReason.back),
                         child: const SizedBox(width: 48.0, height: 48.0),
                       ),
                     ),
@@ -337,14 +262,6 @@ class StreamScanPageState extends State<StreamScanPage> {
                   ),
                 ),
                 Positioned(
-                  top: belowFrameTop + 44.0,
-                  left: 0.0,
-                  right: 0.0,
-                  child: Center(
-                    child: StreamScanCounterComponent(controller: _controller),
-                  ),
-                ),
-                Positioned(
                   left: StreamScanConstants.defaultComponentPadding,
                   right: StreamScanConstants.defaultComponentPadding,
                   bottom: 0.0,
@@ -361,12 +278,7 @@ class StreamScanPageState extends State<StreamScanPage> {
                         StreamScanResultCardComponent(
                           controller: _controller,
                           customBuilder: widget.cardBuilder,
-                        ),
-                        const SizedBox(height: 20.0),
-                        Center(
-                          child: widget.finishButtonBuilder != null
-                              ? widget.finishButtonBuilder!(context, _finish)
-                              : _buildDefaultFinishButton(),
+                          onTap: () => _exit(StreamScanExitReason.cardTap),
                         ),
                         const SizedBox(height: 16.0),
                       ],
@@ -442,38 +354,6 @@ class StreamScanPageState extends State<StreamScanPage> {
           ),
         );
       },
-    );
-  }
-
-  Widget _buildDefaultFinishButton() {
-    const Color green = Color(StreamScanConstants.successColorValue);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28.0),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: green.withValues(alpha: 0.45),
-            blurRadius: 16.0,
-            offset: const Offset(0.0, 4.0),
-          ),
-        ],
-      ),
-      child: ElevatedButton.icon(
-        key: const ValueKey<String>('stream_scan_finish_btn'),
-        onPressed: _finish,
-        icon: const Icon(Icons.check_circle_outline_rounded, size: 22.0),
-        label: const Text(
-          StreamScanConstants.defaultFinishButtonText,
-          style: TextStyle(fontSize: 16.0, fontWeight: FontWeight.w800),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: green,
-          foregroundColor: Colors.black87,
-          elevation: 0.0,
-          padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 14.0),
-          shape: const StadiumBorder(),
-        ),
-      ),
     );
   }
 }

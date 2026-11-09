@@ -22,11 +22,11 @@ StreamScanController _acceptingController() {
 }
 
 /// Opens [StreamScanPage] from a button and records the popped result.
-Future<List<bool?>> _openPage(
+Future<List<StreamScanExitReason?>> _openPage(
   WidgetTester tester,
   StreamScanController controller,
 ) async {
-  final List<bool?> results = <bool?>[];
+  final List<StreamScanExitReason?> results = <StreamScanExitReason?>[];
   await tester.pumpWidget(
     MaterialApp(
       home: Builder(
@@ -34,8 +34,8 @@ Future<List<bool?>> _openPage(
           return ElevatedButton(
             onPressed: () async {
               results.add(
-                await Navigator.of(context).push<bool>(
-                  MaterialPageRoute<bool>(
+                await Navigator.of(context).push<StreamScanExitReason>(
+                  MaterialPageRoute<StreamScanExitReason>(
                     builder: (BuildContext ctx) =>
                         StreamScanPage(controller: controller),
                   ),
@@ -438,7 +438,7 @@ void main() {
   });
 
   group('StreamScanPage', () {
-    testWidgets('shows spec layout: toggle, counter, no card yet, finish', (
+    testWidgets('shows spec layout: toggle, no counter, no card, no finish', (
       WidgetTester tester,
     ) async {
       final StreamScanController controller = _acceptingController();
@@ -448,7 +448,7 @@ void main() {
         find.text(StreamScanConstants.continuousToggleLabel),
         findsOneWidget,
       );
-      expect(find.byType(StreamScanCounterComponent), findsOneWidget);
+      expect(find.byType(StreamScanCounterComponent), findsNothing);
       expect(
         find.descendant(
           of: find.byType(StreamScanResultCardComponent),
@@ -457,54 +457,21 @@ void main() {
         findsNothing,
       );
       expect(
-        find.text(StreamScanConstants.defaultFinishButtonText),
-        findsOneWidget,
+        find.byKey(const ValueKey<String>('stream_scan_finish_btn')),
+        findsNothing,
       );
 
       controller.dispose();
     });
 
-    testWidgets('finish button pops with discarded = false', (
+    testWidgets('back leaves at once, without asking, even after scanning', (
       WidgetTester tester,
     ) async {
       final StreamScanController controller = _acceptingController();
-      final List<bool?> results = await _openPage(tester, controller);
-
-      controller.dispatcher.dispatch(const StreamScanRequest(code: 'P1'));
-      await tester.pump();
-
-      await tester.tap(find.text(StreamScanConstants.defaultFinishButtonText));
-      await tester.pumpAndSettle();
-
-      expect(find.byType(StreamScanPage), findsNothing);
-      expect(results, <bool?>[false]);
-
-      controller.dispose();
-    });
-
-    testWidgets('back without scanned items leaves without asking', (
-      WidgetTester tester,
-    ) async {
-      final StreamScanController controller = _acceptingController();
-      final List<bool?> results = await _openPage(tester, controller);
-
-      await tester.tap(
-        find.byKey(const ValueKey<String>('stream_scan_back_btn')),
+      final List<StreamScanExitReason?> results = await _openPage(
+        tester,
+        controller,
       );
-      await tester.pumpAndSettle();
-
-      expect(find.text(StreamScanConstants.exitConfirmTitle), findsNothing);
-      expect(find.byType(StreamScanPage), findsNothing);
-      expect(results, <bool?>[false]);
-
-      controller.dispose();
-    });
-
-    testWidgets('back after scanning asks; "Ở lại" keeps the screen', (
-      WidgetTester tester,
-    ) async {
-      final StreamScanController controller = _acceptingController();
-      final List<bool?> results = await _openPage(tester, controller);
 
       controller.dispatcher.dispatch(const StreamScanRequest(code: 'P1'));
       await tester.pump();
@@ -512,27 +479,39 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey<String>('stream_scan_back_btn')),
       );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text(StreamScanConstants.exitConfirmTitle), findsOneWidget);
-      // Counting is paused while the dialog is open.
-      expect(controller.presenceTracker.isPaused, isTrue);
-
-      await tester.tap(
-        find.byKey(const ValueKey<String>('stream_scan_exit_stay')),
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(find.text(StreamScanConstants.exitConfirmTitle), findsNothing);
-      expect(find.byType(StreamScanPage), findsOneWidget);
-      expect(controller.presenceTracker.isPaused, isFalse);
-      expect(results, isEmpty);
-
-      await tester.tap(find.text(StreamScanConstants.defaultFinishButtonText));
       await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(StreamScanPage), findsNothing);
+      expect(results, <StreamScanExitReason?>[StreamScanExitReason.back]);
+
       controller.dispose();
     });
 
-    testWidgets('confirmed exit via scanStream returns isDiscarded', (
+    testWidgets('tapping the product card exits with cardTap', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+      final List<StreamScanExitReason?> results = await _openPage(
+        tester,
+        controller,
+      );
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'P1'));
+      await tester.pump();
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('stream_scan_card_tap')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(StreamScanPage), findsNothing);
+      expect(results, <StreamScanExitReason?>[StreamScanExitReason.cardTap]);
+
+      controller.dispose();
+    });
+
+    testWidgets('scanStream reports cardTap and keeps accepted quantities', (
       WidgetTester tester,
     ) async {
       StreamScanSession? session;
@@ -568,17 +547,12 @@ void main() {
       await tester.pump();
 
       await tester.tap(
-        find.byKey(const ValueKey<String>('stream_scan_back_btn')),
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(
-        find.byKey(const ValueKey<String>('stream_scan_exit_leave')),
+        find.byKey(const ValueKey<String>('stream_scan_card_tap')),
       );
       await tester.pumpAndSettle();
 
       expect(find.byType(StreamScanPage), findsNothing);
-      expect(session, isNotNull);
-      expect(session!.isDiscarded, isTrue);
+      expect(session!.exitReason, StreamScanExitReason.cardTap);
       final StreamScanSummary summary = await session!.drained;
       expect(summary.acceptedByCode, <String, int>{'P1': 2});
     });
@@ -635,8 +609,8 @@ void main() {
         // Screen is closed and session was returned by SmartScanner.scanStream.
         expect(find.byType(StreamScanPage), findsNothing);
         expect(capturedSession, isNotNull);
-        // Host-initiated close is not a user discard.
-        expect(capturedSession!.isDiscarded, isFalse);
+        // Host-initiated close counts as a plain back.
+        expect(capturedSession!.exitReason, StreamScanExitReason.back);
 
         // drained MUST NOT be completed yet because onScan is still awaiting completer!
         bool isDrainedDone = false;

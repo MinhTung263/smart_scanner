@@ -68,9 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // Mô phỏng mã lỗi không tìm thấy
         if (req.code.contains('999')) {
-          return const StreamScanResponse.reject(
-            'Không tìm thấy sản phẩm',
-          );
+          return const StreamScanResponse.reject('Không tìm thấy sản phẩm');
         }
 
         // Mô phỏng mã hợp lệ
@@ -78,7 +76,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final int totalQty = currentQty + req.quantity;
         cart[req.code] = totalQty;
 
-        final String title = productNames[req.code] ??
+        final String title =
+            productNames[req.code] ??
             (req.code.startsWith('893')
                 ? 'Sản phẩm mẫu (${req.code})'
                 : 'Sản phẩm mẫu');
@@ -97,18 +96,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Chờ hàng đợi nền xử lý xong các lượt quét còn lại
     final StreamScanSummary summary = await session.drained;
-
-    // Người dùng xác nhận thoát: gỡ mọi sản phẩm đã thêm trong phiên khỏi giỏ.
-    if (session.isDiscarded) {
-      summary.acceptedByCode.forEach((String code, int qty) {
-        final int remaining = (cart[code] ?? 0) - qty;
-        if (remaining > 0) {
-          cart[code] = remaining;
-        } else {
-          cart.remove(code);
-        }
-      });
-    }
 
     if (!mounted) {
       return;
@@ -141,10 +128,10 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              if (session.isDiscarded)
+              if (session.exitReason == StreamScanExitReason.cardTap)
                 const Padding(
                   padding: EdgeInsets.only(bottom: 6),
-                  child: Text('• Đã thoát: bỏ các sản phẩm vừa quét khỏi giỏ'),
+                  child: Text('• Bấm thẻ sản phẩm: easypos sẽ mở màn giỏ hàng'),
                 ),
               Text('• Số lượng đã chấp nhận: ${summary.acceptedQuantity}'),
               const SizedBox(height: 6),

@@ -401,8 +401,8 @@ class SmartScanner {
 
   /// Opens continuous barcode stream scanner with realtime POS callback.
   /// Each counted scan calls [onScan] (lookup + add to cart in the host).
-  /// "Hoàn thành" returns normally; confirmed back sets `isDiscarded`, and
-  /// the host should then remove `acceptedByCode` after awaiting `drained`.
+  /// Back leaves at once and keeps the cart; tapping the product card closes
+  /// the screen with `exitReason == cardTap` so the host can open the cart.
   static Future<StreamScanSession> scanStream(
     BuildContext context, {
     required Future<StreamScanResponse> Function(StreamScanRequest request)
@@ -412,9 +412,6 @@ class SmartScanner {
     StreamScanCardBuilder? cardBuilder,
     StreamScanErrorChipBuilder? chipBuilder,
     StreamScanSlowNetworkBuilder? slowNetworkBuilder,
-    Widget Function(BuildContext context, VoidCallback onFinish)?
-    finishButtonBuilder,
-    StreamScanExitConfirmBuilder? exitConfirmBuilder,
   }) async {
     // Warm up camera list before route transition starts.
     CameraService.preloadCameras();
@@ -424,25 +421,24 @@ class SmartScanner {
       options: options,
     );
 
-    final bool? discarded = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (BuildContext context) => StreamScanPage(
-          dispatcher: dispatcher,
-          options: options,
-          enableVibration: enableVibration,
-          cardBuilder: cardBuilder,
-          chipBuilder: chipBuilder,
-          slowNetworkBuilder: slowNetworkBuilder,
-          finishButtonBuilder: finishButtonBuilder,
-          exitConfirmBuilder: exitConfirmBuilder,
-        ),
-      ),
-    );
+    final StreamScanExitReason? reason = await Navigator.of(context)
+        .push<StreamScanExitReason>(
+          MaterialPageRoute<StreamScanExitReason>(
+            builder: (BuildContext context) => StreamScanPage(
+              dispatcher: dispatcher,
+              options: options,
+              enableVibration: enableVibration,
+              cardBuilder: cardBuilder,
+              chipBuilder: chipBuilder,
+              slowNetworkBuilder: slowNetworkBuilder,
+            ),
+          ),
+        );
 
-    // Closed by the host (no result) is not a user discard.
+    // Closed by the host (no result) counts as a plain back.
     return StreamScanSession(
       drained: dispatcher.drained,
-      isDiscarded: discarded ?? false,
+      exitReason: reason ?? StreamScanExitReason.back,
     );
   }
 }

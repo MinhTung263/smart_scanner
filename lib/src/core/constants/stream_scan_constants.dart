@@ -48,9 +48,6 @@ abstract final class StreamScanConstants {
   /// Default text for slow network indicator.
   static const String defaultSlowNetworkMessage = 'Đang xử lý, mạng chậm...';
 
-  /// Default text for finish button.
-  static const String defaultFinishButtonText = 'Hoàn thành';
-
   /// Default label for a product still being looked up.
   static const String defaultProcessingLabel = 'Đang xử lý...';
 
@@ -79,19 +76,6 @@ abstract final class StreamScanConstants {
   /// Counter label for total quantity.
   static const String counterQuantityLabel = 'Số lượng:';
 
-  /// Exit confirmation dialog title.
-  static const String exitConfirmTitle = 'Thoát màn quét?';
-
-  /// Exit confirmation dialog message.
-  static const String exitConfirmMessage =
-      'Các sản phẩm đã quét sẽ bị bỏ khỏi giỏ hàng.';
-
-  /// Exit confirmation button that keeps scanning.
-  static const String exitConfirmStay = 'Ở lại';
-
-  /// Exit confirmation button that leaves and discards.
-  static const String exitConfirmLeave = 'Thoát';
-
   // ---- Vibration ----
 
   /// Vibration duration in milliseconds for success.
@@ -105,7 +89,7 @@ abstract final class StreamScanConstants {
 
   // ---- Colors ----
 
-  /// Success color hex value (finish button, frame flash, success toast).
+  /// Success color hex value (frame flash, success toast).
   static const int successColorValue = 0xFF10B981;
 
   /// Error color hex value (error toast, frame error border).
