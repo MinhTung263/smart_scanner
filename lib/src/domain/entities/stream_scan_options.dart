@@ -1,4 +1,5 @@
 import '../../core/constants/stream_scan_constants.dart';
+import 'stream_scan_validator.dart';
 
 /// Policy governing when a barcode is eligible to be rescanned.
 class RescanPolicy {
@@ -43,8 +44,13 @@ class StreamScanOptions {
   /// Auto-hide duration for error chips.
   final Duration chipAutoHide;
 
+  /// Optional host rule run before counting; invalid codes never reach onScan.
+  /// Null (default) accepts every decoded code, as before.
+  final StreamScanValidator? validator;
+
   /// Creates configuration options for stream scan session.
   const StreamScanOptions({
+    this.validator,
     this.rescanPolicy = const RescanPolicy.leaveFrame(),
     this.maxCodesPerFrame = StreamScanConstants.defaultMaxCodesPerFrame,
     this.maxConcurrent = StreamScanConstants.defaultMaxConcurrent,

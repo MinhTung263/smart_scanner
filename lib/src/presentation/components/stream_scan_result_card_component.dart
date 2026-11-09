@@ -11,7 +11,7 @@ typedef StreamScanCardBuilder =
     Widget Function(BuildContext context, StreamScanCardItem item);
 
 /// Card of the most recently scanned product, with decorative layers below.
-/// Shows "Chưa quét mã nào" until the first scan.
+/// Hidden entirely until the first code is scanned.
 class StreamScanResultCardComponent extends StatelessWidget {
   /// Controller supplying reactive card state.
   final StreamScanController controller;
@@ -34,39 +34,37 @@ class StreamScanResultCardComponent extends StatelessWidget {
         layers * StreamScanConstants.decorativeLayerOffsetY;
 
     return RepaintBoundary(
-      child: SizedBox(
-        height: stackHeight,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            // Decorative layers only; drawn farthest first.
-            for (int depth = layers; depth >= 1; depth--)
-              _buildDecorativeLayer(depth),
-            Positioned(
-              top: 0.0,
-              left: 0.0,
-              right: 0.0,
-              height: StreamScanConstants.productCardHeight,
-              child: ValueListenableBuilder<List<StreamScanCardItem>>(
-                valueListenable: controller.recentCards,
-                builder:
-                    (BuildContext context, List<StreamScanCardItem> cards, _) {
-                      final StreamScanCardItem? front = cards.isEmpty
-                          ? null
-                          : cards.first;
-                      if (front != null && customBuilder != null) {
-                        return customBuilder!(context, front);
-                      }
-                      return _buildCardShell(
-                        child: front == null
-                            ? _buildEmptyContent()
-                            : _buildProductContent(context, front),
-                      );
-                    },
-              ),
+      child: ValueListenableBuilder<List<StreamScanCardItem>>(
+        valueListenable: controller.recentCards,
+        builder: (BuildContext context, List<StreamScanCardItem> cards, _) {
+          // Spec: no card at all until the first code is scanned.
+          if (cards.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          final StreamScanCardItem front = cards.first;
+          return SizedBox(
+            height: stackHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                // Decorative layers only; drawn farthest first.
+                for (int depth = layers; depth >= 1; depth--)
+                  _buildDecorativeLayer(depth),
+                Positioned(
+                  top: 0.0,
+                  left: 0.0,
+                  right: 0.0,
+                  height: StreamScanConstants.productCardHeight,
+                  child: customBuilder != null
+                      ? customBuilder!(context, front)
+                      : _buildCardShell(
+                          child: _buildProductContent(context, front),
+                        ),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -109,25 +107,6 @@ class StreamScanResultCardComponent extends StatelessWidget {
         ],
       ),
       child: child,
-    );
-  }
-
-  Widget _buildEmptyContent() {
-    return Row(
-      children: <Widget>[
-        _buildPlaceholderThumbnail(),
-        const SizedBox(width: 12.0),
-        const Expanded(
-          child: Text(
-            StreamScanConstants.emptyCardLabel,
-            style: TextStyle(
-              color: Color(StreamScanConstants.productSubtitleColorValue),
-              fontSize: 14.0,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ],
     );
   }
 

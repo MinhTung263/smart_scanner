@@ -38,7 +38,9 @@ class StreamScanContinuousToggleComponent extends StatelessWidget {
                 color: Colors.white,
                 fontSize: 15.0,
                 fontWeight: FontWeight.w600,
-                shadows: <Shadow>[Shadow(color: Colors.black54, blurRadius: 4.0)],
+                shadows: <Shadow>[
+                  Shadow(color: Colors.black54, blurRadius: 4.0),
+                ],
               ),
             ),
           ],

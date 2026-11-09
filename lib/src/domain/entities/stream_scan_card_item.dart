@@ -101,6 +101,9 @@ enum StreamScanChipKind {
 
   /// Neutral toast, e.g. when the continuous-scan toggle changes.
   info,
+
+  /// Green toast after a code was added to the cart.
+  success,
 }
 
 /// Presentation item for a toast chip shown above the scan frame.

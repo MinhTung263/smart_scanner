@@ -30,6 +30,9 @@ abstract final class StreamScanConstants {
   /// Auto-hide duration for info chips (continuous toggle toasts).
   static const Duration infoChipAutoHide = Duration(seconds: 2);
 
+  /// Auto-hide duration for success chips after a code is added.
+  static const Duration successChipAutoHide = Duration(seconds: 2);
+
   /// Duration of the green or red scan-frame flash after a result.
   static const Duration frameFlashDuration = Duration(milliseconds: 350);
 
@@ -38,6 +41,9 @@ abstract final class StreamScanConstants {
 
   /// Fallback error message when onScan fails.
   static const String defaultErrorMessage = 'Có lỗi xảy ra';
+
+  /// Default toast when a code fails the GS1 check digit validator.
+  static const String invalidCodeMessage = 'Mã không hợp lệ';
 
   /// Default text for slow network indicator.
   static const String defaultSlowNetworkMessage = 'Đang xử lý, mạng chậm...';
@@ -48,8 +54,8 @@ abstract final class StreamScanConstants {
   /// Default label for a product still being looked up.
   static const String defaultProcessingLabel = 'Đang xử lý...';
 
-  /// Card text before any product has been scanned.
-  static const String emptyCardLabel = 'Chưa quét mã nào';
+  /// Success toast after a code was added to the cart.
+  static const String successToastMessage = 'Thêm vào giỏ hàng thành công';
 
   /// Prefix of the scanned quantity badge (e.g. "+2").
   static const String quantityBadgePrefix = '+';
@@ -99,7 +105,7 @@ abstract final class StreamScanConstants {
 
   // ---- Colors ----
 
-  /// Success color hex value (finish button, frame flash).
+  /// Success color hex value (finish button, frame flash, success toast).
   static const int successColorValue = 0xFF10B981;
 
   /// Error color hex value (error toast, frame error border).

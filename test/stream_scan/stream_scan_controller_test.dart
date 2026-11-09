@@ -11,6 +11,7 @@ import 'package:smart_scanner/src/domain/entities/stream_scan_card_item.dart';
 import 'package:smart_scanner/src/domain/entities/stream_scan_options.dart';
 import 'package:smart_scanner/src/domain/entities/stream_scan_request.dart';
 import 'package:smart_scanner/src/domain/entities/stream_scan_response.dart';
+import 'package:smart_scanner/src/domain/entities/stream_scan_validator.dart';
 import 'package:smart_scanner/src/presentation/controllers/stream_scan_controller.dart';
 
 class _FakeVibrationService extends StreamVibrationService {
@@ -319,6 +320,52 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('accept shows a success toast that auto-hides', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        onScan: (StreamScanRequest req) async =>
+            const StreamScanResponse.accept(),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'A'));
+      await tester.pump();
+
+      final StreamScanErrorChipItem chip = controller.errorChips.value.single;
+      expect(chip.kind, StreamScanChipKind.success);
+      expect(chip.isError, isFalse);
+      expect(chip.message, StreamScanConstants.successToastMessage);
+
+      await tester.pump(StreamScanConstants.successChipAutoHide);
+      expect(controller.errorChips.value, isEmpty);
+
+      controller.dispose();
+    });
+
+    testWidgets('a later error replaces the success toast', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        onScan: (StreamScanRequest req) async => req.code == 'BAD'
+            ? const StreamScanResponse.reject('Không tìm thấy')
+            : const StreamScanResponse.accept(),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'OK'));
+      await tester.pump();
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'BAD'));
+      await tester.pump();
+
+      final StreamScanErrorChipItem chip = controller.errorChips.value.single;
+      expect(chip.isError, isTrue);
+      expect(chip.message, 'Không tìm thấy');
+
+      await tester.pump(const Duration(seconds: 6));
+      controller.dispose();
+    });
+
     testWidgets('reject of a product already in cart keeps its layer', (
       WidgetTester tester,
     ) async {
@@ -543,6 +590,146 @@ void main() {
 
       expect(receivedCodes, <String>['FRAME_CODE_1']);
 
+      controller.dispose();
+    });
+  });
+
+  group('StreamScanController validator', () {
+    StreamFrameReport frameOf(String code, BarcodeFormat format) {
+      return StreamFrameReport(
+        barcodes: <Barcode>[
+          Barcode(
+            type: BarcodeType.product,
+            format: format,
+            displayValue: code,
+            rawValue: code,
+            rawBytes: null,
+            boundingBox: Rect.zero,
+            cornerPoints: const <Point<int>>[],
+            value: null,
+          ),
+        ],
+      );
+    }
+
+    testWidgets('invalid code shows error, never reaches onScan or counter', (
+      WidgetTester tester,
+    ) async {
+      final List<String> received = <String>[];
+      final _FakeVibrationService vibration = _FakeVibrationService();
+      final StreamScanController controller = StreamScanController(
+        options: StreamScanOptions(
+          validator: StreamScanValidators.gs1CheckDigit(),
+        ),
+        onScan: (StreamScanRequest req) async {
+          received.add(req.code);
+          return const StreamScanResponse.accept();
+        },
+        vibrationService: vibration,
+      );
+
+      controller.onFrameProcessed(
+        frameOf('4006381333932', BarcodeFormat.ean13),
+      );
+      await tester.pump();
+
+      expect(received, isEmpty);
+      expect(controller.recentCards.value, isEmpty);
+      expect(controller.counter.value.totalQuantity, 0);
+      expect(controller.hasScannedItems, isFalse);
+      expect(controller.frameFlash.value, StreamScanFrameFlash.error);
+      expect(vibration.errorVibrations, 1);
+      final StreamScanErrorChipItem chip = controller.errorChips.value.single;
+      expect(chip.isError, isTrue);
+      expect(chip.message, StreamScanConstants.invalidCodeMessage);
+      expect(controller.dispatcher.summary.notAddedQuantity, 0);
+
+      // Held in frame: no repeated toast or vibration.
+      controller.onFrameProcessed(
+        frameOf('4006381333932', BarcodeFormat.ean13),
+      );
+      await tester.pump();
+      expect(vibration.errorVibrations, 1);
+
+      await tester.pump(const Duration(seconds: 6));
+      controller.dispose();
+    });
+
+    testWidgets('valid code passes the validator and is dispatched', (
+      WidgetTester tester,
+    ) async {
+      final List<String> received = <String>[];
+      final StreamScanController controller = StreamScanController(
+        options: StreamScanOptions(
+          validator: StreamScanValidators.gs1CheckDigit(),
+        ),
+        onScan: (StreamScanRequest req) async {
+          received.add(req.code);
+          return const StreamScanResponse.accept();
+        },
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.onFrameProcessed(
+        frameOf('4006381333931', BarcodeFormat.ean13),
+      );
+      await tester.pump();
+
+      expect(received, <String>['4006381333931']);
+      expect(controller.counter.value.totalQuantity, 1);
+
+      await tester.pump(const Duration(seconds: 3));
+      controller.dispose();
+    });
+
+    testWidgets('invalid code does not pause single mode', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = StreamScanController(
+        options: StreamScanOptions(
+          validator: StreamScanValidators.gs1CheckDigit(),
+        ),
+        onScan: (StreamScanRequest req) async =>
+            const StreamScanResponse.accept(),
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.setContinuousMode(false);
+      controller.onFrameProcessed(
+        frameOf('4006381333932', BarcodeFormat.ean13),
+      );
+      await tester.pump();
+
+      expect(controller.isWaitingForTap.value, isFalse);
+      expect(controller.presenceTracker.isPaused, isFalse);
+
+      await tester.pump(const Duration(seconds: 6));
+      controller.dispose();
+    });
+
+    testWidgets('a throwing validator lets the code through', (
+      WidgetTester tester,
+    ) async {
+      final List<String> received = <String>[];
+      final StreamScanController controller = StreamScanController(
+        options: StreamScanOptions(
+          validator: (String code, BarcodeFormat format) =>
+              throw StateError('broken rule'),
+        ),
+        onScan: (StreamScanRequest req) async {
+          received.add(req.code);
+          return const StreamScanResponse.accept();
+        },
+        vibrationService: _FakeVibrationService(),
+      );
+
+      controller.onFrameProcessed(frameOf('ABC', BarcodeFormat.code128));
+      await tester.pump();
+
+      expect(received, <String>['ABC']);
+      expect(tester.takeException(), isA<StateError>());
+
+      await tester.pump(const Duration(seconds: 3));
       controller.dispose();
     });
   });

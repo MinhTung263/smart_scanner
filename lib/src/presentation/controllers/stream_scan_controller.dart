@@ -11,6 +11,7 @@ import '../../domain/entities/stream_scan_card_item.dart';
 import '../../domain/entities/stream_scan_options.dart';
 import '../../domain/entities/stream_scan_request.dart';
 import '../../domain/entities/stream_scan_response.dart';
+import '../../domain/entities/stream_scan_validator.dart';
 import '../../domain/usecases/stream_presence_tracker_usecase.dart';
 import '../../domain/usecases/stream_scan_dispatcher.dart';
 
@@ -64,7 +65,8 @@ class StreamScanController extends ChangeNotifier {
        _presenceTracker =
            presenceTracker ?? StreamPresenceTrackerUseCase(options: options),
        _dispatcher =
-           dispatcher ?? StreamScanDispatcher(onScan: onScan, options: options) {
+           dispatcher ??
+           StreamScanDispatcher(onScan: onScan, options: options) {
     _attachDispatcherListeners();
   }
 
@@ -110,9 +112,15 @@ class StreamScanController extends ChangeNotifier {
   StreamScanSession get session => _dispatcher.session;
 
   /// Processes camera frame report and dispatches detected codes.
+  /// Codes failing `options.validator` are reported and never dispatched.
   void onFrameProcessed(StreamFrameReport report) {
     final List<Barcode> barcodesToCount = _presenceTracker.processFrame(report);
     for (final Barcode barcode in barcodesToCount) {
+      final String? error = _validate(barcode);
+      if (error != null) {
+        _handleInvalid(barcode.rawValue ?? '', error);
+        continue;
+      }
       _dispatcher.dispatchBarcode(barcode);
     }
   }
@@ -129,10 +137,12 @@ class StreamScanController extends ChangeNotifier {
       _isWaitingForTap.value = false;
       _removePauseReason(_singleModePause);
     }
-    _showInfoChip(
+    _showToast(
       value
           ? StreamScanConstants.continuousOnMessage
           : StreamScanConstants.continuousOffMessage,
+      kind: StreamScanChipKind.info,
+      autoHide: StreamScanConstants.infoChipAutoHide,
     );
   }
 
@@ -275,6 +285,11 @@ class StreamScanController extends ChangeNotifier {
       _cardOrder.insert(0, request.code);
     }
     _publishCards();
+    _showToast(
+      StreamScanConstants.successToastMessage,
+      kind: StreamScanChipKind.success,
+      autoHide: StreamScanConstants.successChipAutoHide,
+    );
 
     // Single mode: one code counted, wait for "Chạm để quét tiếp".
     if (_awaitingSingleResult) {
@@ -319,22 +334,62 @@ class StreamScanController extends ChangeNotifier {
       _removePauseReason(_singleModePause);
     }
 
-    final String message =
-        response.errorMessage ?? StreamScanConstants.defaultErrorMessage;
+    _showErrorChip(
+      code: request.code,
+      message: response.errorMessage ?? StreamScanConstants.defaultErrorMessage,
+      quantity: totalUnaddedQuantity,
+    );
+  }
 
+  /// Runs the host validator; a throwing validator lets the code through.
+  String? _validate(Barcode barcode) {
+    final StreamScanValidator? validator = _options.validator;
+    final String? code = barcode.rawValue;
+    if (validator == null || code == null || code.isEmpty) {
+      return null;
+    }
+    try {
+      return validator(code, barcode.format);
+    } catch (error, stack) {
+      // A broken rule must not block selling; onScan still decides.
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stack,
+          library: 'smart_scanner',
+          context: ErrorDescription(
+            'while running StreamScanOptions.validator',
+          ),
+        ),
+      );
+      return null;
+    }
+  }
+
+  /// Invalid code: red flash and toast only; no card, counter or onScan.
+  void _handleInvalid(String code, String message) {
+    _vibrationService.vibrateError();
+    _flash(StreamScanFrameFlash.error);
+    _showErrorChip(code: code, message: message, quantity: 1);
+  }
+
+  /// Shows an error toast, merging repeats of the same code and message.
+  void _showErrorChip({
+    required String code,
+    required String message,
+    required int quantity,
+  }) {
     final List<StreamScanErrorChipItem> chips =
         List<StreamScanErrorChipItem>.from(_errorChips.value);
     final int existingIndex = chips.indexWhere(
       (StreamScanErrorChipItem item) =>
-          item.isError &&
-          item.code == request.code &&
-          item.message == message,
+          item.isError && item.code == code && item.message == message,
     );
 
     if (existingIndex >= 0) {
       final StreamScanErrorChipItem existingChip = chips[existingIndex];
       final StreamScanErrorChipItem updatedChip = existingChip.copyWith(
-        unaddedQuantity: existingChip.unaddedQuantity + totalUnaddedQuantity,
+        unaddedQuantity: existingChip.unaddedQuantity + quantity,
         timestamp: DateTime.now(),
       );
       chips[existingIndex] = updatedChip;
@@ -342,10 +397,10 @@ class StreamScanController extends ChangeNotifier {
       _scheduleChipAutoHide(updatedChip.id, _options.chipAutoHide);
     } else {
       final StreamScanErrorChipItem newChip = StreamScanErrorChipItem(
-        id: '${request.code}_${DateTime.now().microsecondsSinceEpoch}',
-        code: request.code,
+        id: '${code}_${DateTime.now().microsecondsSinceEpoch}',
+        code: code,
         message: message,
-        unaddedQuantity: totalUnaddedQuantity,
+        unaddedQuantity: quantity,
         timestamp: DateTime.now(),
       );
       chips.insert(0, newChip);
@@ -355,21 +410,26 @@ class StreamScanController extends ChangeNotifier {
     }
   }
 
-  void _showInfoChip(String message) {
+  /// Shows a non-error toast (info or success) as the newest chip.
+  void _showToast(
+    String message, {
+    required StreamScanChipKind kind,
+    required Duration autoHide,
+  }) {
     final List<StreamScanErrorChipItem> chips =
         List<StreamScanErrorChipItem>.from(_errorChips.value);
     final StreamScanErrorChipItem chip = StreamScanErrorChipItem(
-      id: 'info_${DateTime.now().microsecondsSinceEpoch}',
+      id: '${kind.name}_${DateTime.now().microsecondsSinceEpoch}',
       code: '',
       message: message,
       unaddedQuantity: 0,
-      kind: StreamScanChipKind.info,
+      kind: kind,
       timestamp: DateTime.now(),
     );
     chips.insert(0, chip);
     _trimChipsList(chips);
     _errorChips.value = chips;
-    _scheduleChipAutoHide(chip.id, StreamScanConstants.infoChipAutoHide);
+    _scheduleChipAutoHide(chip.id, autoHide);
   }
 
   void _flash(StreamScanFrameFlash kind) {

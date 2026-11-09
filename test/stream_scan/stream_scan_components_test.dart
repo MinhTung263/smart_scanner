@@ -57,7 +57,7 @@ Future<List<bool?>> _openPage(
 
 void main() {
   group('StreamScanResultCardComponent', () {
-    testWidgets('shows "Chưa quét mã nào" before the first scan', (
+    testWidgets('renders no card at all before the first scan', (
       WidgetTester tester,
     ) async {
       final StreamScanController controller = _acceptingController();
@@ -66,7 +66,17 @@ void main() {
         _buildTestApp(StreamScanResultCardComponent(controller: controller)),
       );
 
-      expect(find.text(StreamScanConstants.emptyCardLabel), findsOneWidget);
+      expect(
+        tester.getSize(find.byType(StreamScanResultCardComponent)).height,
+        0.0,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(StreamScanResultCardComponent),
+          matching: find.byType(Stack),
+        ),
+        findsNothing,
+      );
       expect(find.byType(CircularProgressIndicator), findsNothing);
 
       controller.dispose();
@@ -208,6 +218,31 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       controller.dispose();
     });
+
+    testWidgets('is hidden while the continuous toggle is off', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+
+      await tester.pumpWidget(
+        _buildTestApp(StreamScanCounterComponent(controller: controller)),
+      );
+      final Finder itemsLabel = find.text(
+        '${StreamScanConstants.counterItemsLabel} ',
+      );
+      expect(itemsLabel, findsOneWidget);
+
+      controller.setContinuousMode(false);
+      await tester.pump();
+      expect(itemsLabel, findsNothing);
+
+      controller.setContinuousMode(true);
+      await tester.pump();
+      expect(itemsLabel, findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 3));
+      controller.dispose();
+    });
   });
 
   group('StreamScanErrorChipComponent', () {
@@ -279,6 +314,34 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('renders success chips with the check icon', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+
+      controller.errorChips.value = <StreamScanErrorChipItem>[
+        StreamScanErrorChipItem(
+          id: 'success_1',
+          code: '',
+          message: StreamScanConstants.successToastMessage,
+          kind: StreamScanChipKind.success,
+          timestamp: DateTime.now(),
+        ),
+      ];
+
+      await tester.pumpWidget(
+        _buildTestApp(StreamScanErrorChipComponent(controller: controller)),
+      );
+
+      expect(find.byIcon(Icons.check_circle_outline_rounded), findsOneWidget);
+      expect(
+        find.text(StreamScanConstants.successToastMessage),
+        findsOneWidget,
+      );
+
+      controller.dispose();
+    });
+
     testWidgets('supports error chip customBuilder', (
       WidgetTester tester,
     ) async {
@@ -297,9 +360,10 @@ void main() {
         _buildTestApp(
           StreamScanErrorChipComponent(
             controller: controller,
-            customBuilder: (BuildContext context, StreamScanErrorChipItem item) {
-              return Text('CustomChip: ${item.code}');
-            },
+            customBuilder:
+                (BuildContext context, StreamScanErrorChipItem item) {
+                  return Text('CustomChip: ${item.code}');
+                },
           ),
         ),
       );
@@ -321,7 +385,10 @@ void main() {
       );
 
       expect(find.byType(StreamScanSlowNetworkComponent), findsOneWidget);
-      expect(find.byKey(const ValueKey('slow_network_indicator')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('slow_network_indicator')),
+        findsNothing,
+      );
 
       controller.dispose();
     });
@@ -371,7 +438,7 @@ void main() {
   });
 
   group('StreamScanPage', () {
-    testWidgets('shows spec layout: toggle, counter, empty card, finish', (
+    testWidgets('shows spec layout: toggle, counter, no card yet, finish', (
       WidgetTester tester,
     ) async {
       final StreamScanController controller = _acceptingController();
@@ -382,7 +449,13 @@ void main() {
         findsOneWidget,
       );
       expect(find.byType(StreamScanCounterComponent), findsOneWidget);
-      expect(find.text(StreamScanConstants.emptyCardLabel), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(StreamScanResultCardComponent),
+          matching: find.byType(Stack),
+        ),
+        findsNothing,
+      );
       expect(
         find.text(StreamScanConstants.defaultFinishButtonText),
         findsOneWidget,

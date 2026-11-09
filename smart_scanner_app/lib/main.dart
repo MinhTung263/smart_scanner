@@ -89,6 +89,10 @@ class _HomeScreenState extends State<HomeScreen> {
           totalInCart: totalQty,
         );
       },
+      // Mã EAN/UPC sai chữ số kiểm bị chặn ngay, không gọi onScan.
+      options: StreamScanOptions(
+        validator: StreamScanValidators.gs1CheckDigit(),
+      ),
     );
 
     // Chờ hàng đợi nền xử lý xong các lượt quét còn lại

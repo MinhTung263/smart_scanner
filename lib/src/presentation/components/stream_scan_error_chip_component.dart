@@ -8,7 +8,7 @@ import '../controllers/stream_scan_controller.dart';
 typedef StreamScanErrorChipBuilder =
     Widget Function(BuildContext context, StreamScanErrorChipItem item);
 
-/// Toast chips shown above the scan frame: red for errors, dark for info.
+/// Toast chips above the scan frame: red error, green success, dark info.
 /// Shows the host message only, newest first, up to `maxVisibleChips`.
 class StreamScanErrorChipComponent extends StatelessWidget {
   /// Controller supplying reactive error chip state.
@@ -29,32 +29,48 @@ class StreamScanErrorChipComponent extends StatelessWidget {
     return RepaintBoundary(
       child: ValueListenableBuilder<List<StreamScanErrorChipItem>>(
         valueListenable: controller.errorChips,
-        builder: (BuildContext context, List<StreamScanErrorChipItem> chips, _) {
-          if (chips.isEmpty) {
-            return const SizedBox.shrink();
-          }
-
-          final int limit = controller.options.maxVisibleChips;
-          final List<StreamScanErrorChipItem> visibleChips = chips
-              .take(limit)
-              .toList();
-
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: visibleChips.map((StreamScanErrorChipItem item) {
-              if (customBuilder != null) {
-                return customBuilder!(context, item);
+        builder:
+            (BuildContext context, List<StreamScanErrorChipItem> chips, _) {
+              if (chips.isEmpty) {
+                return const SizedBox.shrink();
               }
-              return _buildDefaultChip(item);
-            }).toList(),
-          );
-        },
+
+              final int limit = controller.options.maxVisibleChips;
+              final List<StreamScanErrorChipItem> visibleChips = chips
+                  .take(limit)
+                  .toList();
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: visibleChips.map((StreamScanErrorChipItem item) {
+                  if (customBuilder != null) {
+                    return customBuilder!(context, item);
+                  }
+                  return _buildDefaultChip(item);
+                }).toList(),
+              );
+            },
       ),
     );
   }
 
   Widget _buildDefaultChip(StreamScanErrorChipItem item) {
-    final bool isError = item.isError;
+    final Color background = switch (item.kind) {
+      StreamScanChipKind.error => const Color(
+        StreamScanConstants.errorColorValue,
+      ),
+      StreamScanChipKind.success => const Color(
+        StreamScanConstants.successColorValue,
+      ),
+      StreamScanChipKind.info => const Color(
+        StreamScanConstants.cardBackgroundColorValue,
+      ).withValues(alpha: 0.9),
+    };
+    final IconData icon = switch (item.kind) {
+      StreamScanChipKind.error => Icons.error_outline_rounded,
+      StreamScanChipKind.success => Icons.check_circle_outline_rounded,
+      StreamScanChipKind.info => Icons.info_outline_rounded,
+    };
     return Container(
       key: ValueKey<String>('chip_${item.id}'),
       margin: const EdgeInsets.only(
@@ -62,11 +78,7 @@ class StreamScanErrorChipComponent extends StatelessWidget {
       ),
       padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 9.0),
       decoration: BoxDecoration(
-        color: isError
-            ? const Color(StreamScanConstants.errorColorValue)
-            : const Color(
-                StreamScanConstants.cardBackgroundColorValue,
-              ).withValues(alpha: 0.9),
+        color: background,
         borderRadius: BorderRadius.circular(
           StreamScanConstants.defaultChipBorderRadius,
         ),
@@ -74,11 +86,7 @@ class StreamScanErrorChipComponent extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(
-            isError ? Icons.error_outline_rounded : Icons.info_outline_rounded,
-            color: Colors.white,
-            size: 18.0,
-          ),
+          Icon(icon, color: Colors.white, size: 18.0),
           const SizedBox(width: StreamScanConstants.defaultItemSpacing),
           Flexible(
             child: Text(

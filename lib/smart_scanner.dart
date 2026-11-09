@@ -10,6 +10,7 @@ export 'src/domain/entities/stream_frame_report.dart';
 export 'src/domain/entities/stream_scan_request.dart';
 export 'src/domain/entities/stream_scan_response.dart';
 export 'src/domain/entities/stream_scan_options.dart';
+export 'src/domain/entities/stream_scan_validator.dart';
 export 'src/domain/entities/stream_scan_card_item.dart';
 export 'src/presentation/pages/stream_scan_page.dart';
 export 'src/presentation/components/stream_scan_result_card_component.dart';
