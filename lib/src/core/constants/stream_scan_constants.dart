@@ -36,7 +36,6 @@ abstract final class StreamScanConstants {
   /// Duration of the green or red scan-frame flash after a result.
   static const Duration frameFlashDuration = Duration(milliseconds: 350);
 
-
   // ---- Texts ----
 
   /// Fallback error message when onScan fails.
@@ -101,7 +100,6 @@ abstract final class StreamScanConstants {
   /// Dark surface color hex value (slow network, info toast).
   static const int cardBackgroundColorValue = 0xFF1C1C2E;
 
-
   /// Toggle active track color hex value.
   static const int toggleActiveColorValue = 0xFF2563EB;
 
@@ -163,4 +161,7 @@ abstract final class StreamScanConstants {
 
   /// Gap between the scan frame and widgets placed below it.
   static const double belowFrameGap = 14.0;
+
+  /// Height of the continuous scan toggle row under the frame.
+  static const double continuousToggleHeight = 32.0;
 }

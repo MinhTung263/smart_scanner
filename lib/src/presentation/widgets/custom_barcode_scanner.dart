@@ -24,6 +24,9 @@ class CustomBarcodeScanner extends StatefulWidget {
   final bool showBoundingBox;
   final Color boundingBoxColor;
   final Rect? scanWindow;
+
+  /// Gap between the scan window's bottom edge and the blur/glare hint.
+  final double backAwayHintGap;
   final IconData? loadingIcon;
   final void Function()? onWindowScaleStart;
   final void Function(double scale)? onWindowScaleUpdate;
@@ -47,6 +50,7 @@ class CustomBarcodeScanner extends StatefulWidget {
     this.showBoundingBox = true,
     this.boundingBoxColor = const Color(0xFF10B981),
     this.scanWindow,
+    this.backAwayHintGap = 16.0,
     this.loadingIcon,
     this.overlayBuilder,
     this.onWindowScaleStart,
@@ -805,7 +809,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
             left: 24,
             right: 24,
             top: widget.scanWindow != null
-                ? widget.scanWindow!.bottom + 16
+                ? widget.scanWindow!.bottom + widget.backAwayHintGap
                 : size.height / 2 + 90,
             child: IgnorePointer(
               child: Center(

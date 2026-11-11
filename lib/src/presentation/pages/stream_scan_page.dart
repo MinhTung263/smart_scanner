@@ -186,6 +186,12 @@ class StreamScanPageState extends State<StreamScanPage> {
             final double belowFrameTop =
                 scanWindow.bottom + StreamScanConstants.belowFrameGap;
 
+            // Blur/glare hint sits below the toggle row, not on top of it.
+            const double belowToggleGap =
+                StreamScanConstants.belowFrameGap +
+                StreamScanConstants.continuousToggleHeight +
+                StreamScanConstants.defaultItemSpacing;
+
             return Stack(
               children: <Widget>[
                 Positioned.fill(
@@ -193,6 +199,7 @@ class StreamScanPageState extends State<StreamScanPage> {
                     key: _scannerKey,
                     formats: widget.formats,
                     scanWindow: scanWindow,
+                    backAwayHintGap: belowToggleGap,
                     onDetect: (List<Barcode> barcodes) {
                       // Handled through onFrameProcessed hook.
                     },
