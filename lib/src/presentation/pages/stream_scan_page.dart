@@ -200,6 +200,7 @@ class StreamScanPageState extends State<StreamScanPage> {
                     formats: widget.formats,
                     scanWindow: scanWindow,
                     backAwayHintGap: belowToggleGap,
+                    autoPauseHintTop: scanWindow.bottom + belowToggleGap,
                     onDetect: (List<Barcode> barcodes) {
                       // Handled through onFrameProcessed hook.
                     },

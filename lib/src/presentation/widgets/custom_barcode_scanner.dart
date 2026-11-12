@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:async';
 import 'package:app_settings/app_settings.dart';
 import 'package:camera/camera.dart';
@@ -27,6 +28,10 @@ class CustomBarcodeScanner extends StatefulWidget {
 
   /// Gap between the scan window's bottom edge and the blur/glare hint.
   final double backAwayHintGap;
+
+  /// Top offset of the "tap to resume" hint in the idle overlay. `null`
+  /// (default) keeps it right under the title.
+  final double? autoPauseHintTop;
   final IconData? loadingIcon;
   final void Function()? onWindowScaleStart;
   final void Function(double scale)? onWindowScaleUpdate;
@@ -51,6 +56,7 @@ class CustomBarcodeScanner extends StatefulWidget {
     this.boundingBoxColor = const Color(0xFF10B981),
     this.scanWindow,
     this.backAwayHintGap = 16.0,
+    this.autoPauseHintTop,
     this.loadingIcon,
     this.overlayBuilder,
     this.onWindowScaleStart,
@@ -857,6 +863,7 @@ class CustomBarcodeScannerState extends State<CustomBarcodeScanner>
           Positioned.fill(
             child: _AutoPauseOverlay(
               onResume: _resumeFromAutoPause,
+              hintTop: widget.autoPauseHintTop,
             ),
           ),
       ],
@@ -1169,7 +1176,10 @@ class _ScannerLoadingAnimationState extends State<_ScannerLoadingAnimation>
 
 class _AutoPauseOverlay extends StatefulWidget {
   final VoidCallback onResume;
-  const _AutoPauseOverlay({required this.onResume});
+
+  /// Top offset of the "tap to resume" hint; `null` keeps it under the title.
+  final double? hintTop;
+  const _AutoPauseOverlay({required this.onResume, this.hintTop});
 
   @override
   State<_AutoPauseOverlay> createState() => _AutoPauseOverlayState();
@@ -1204,6 +1214,59 @@ class _AutoPauseOverlayState extends State<_AutoPauseOverlay>
     super.dispose();
   }
 
+
+  static const double _iconBlockHeight = 110.0;
+  static const double _iconTitleGap = 28.0;
+  static const double _titleHeight = 20.5;
+  static const double _hintGap = 10.0;
+  static const double _hintHeight = 32.0;
+
+  /// Top of the hint if it were laid out under the title (centered column).
+  double _naturalHintTop(double overlayHeight) {
+    const double columnHeight =
+        _iconBlockHeight + _iconTitleGap + _titleHeight + _hintGap + _hintHeight;
+    return (overlayHeight - columnHeight) / 2 +
+        columnHeight -
+        _hintHeight;
+  }
+
+  Widget _buildHint() {
+    return Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 8,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.12),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.touch_app_rounded,
+              color: Color(0xFF10B981),
+              size: 16,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Chạm vào màn hình để tiếp tục quét',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.85),
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     return TweenAnimationBuilder<double>(
@@ -1218,7 +1281,11 @@ class _AutoPauseOverlayState extends State<_AutoPauseOverlay>
             behavior: HitTestBehavior.opaque,
             child: Container(
               color: Colors.black.withValues(alpha: 0.82),
-              child: Center(
+              child: LayoutBuilder(
+                builder: (context, constraints) => Stack(
+                fit: StackFit.expand,
+                children: [
+                  Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 32.0),
                   child: Column(
@@ -1294,45 +1361,29 @@ class _AutoPauseOverlayState extends State<_AutoPauseOverlay>
                         ),
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 10),
-                      // --- Subtitle with touch hint ---
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.12),
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.touch_app_rounded,
-                              color: Color(0xFF10B981),
-                              size: 16,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Chạm vào màn hình để tiếp tục quét',
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.85),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      ),
+                      const SizedBox(height: _hintGap),
+                      // With a custom hintTop the hint is drawn separately;
+                      // keep its space so the icon and title stay put.
+                      if (widget.hintTop == null)
+                        _buildHint()
+                      else
+                        const SizedBox(height: _hintHeight),
                     ],
                   ),
                 ),
+              ),
+                  if (widget.hintTop != null)
+                    Positioned(
+                      top: math.max(
+                        widget.hintTop!,
+                        _naturalHintTop(constraints.maxHeight),
+                      ),
+                      left: 0.0,
+                      right: 0.0,
+                      child: Center(child: _buildHint()),
+                    ),
+                ],
+              ),
               ),
             ),
           ),
