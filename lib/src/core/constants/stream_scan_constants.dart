@@ -147,14 +147,17 @@ abstract final class StreamScanConstants {
   /// Product thumbnail size.
   static const double thumbnailSize = 48.0;
 
-  /// Number of decorative layers stacked under the product card.
-  static const int decorativeLayerCount = 3;
+  /// Most cards drawn in the stack (display only; logic is not affected).
+  static const int stackVisibleLayers = 3;
 
-  /// Vertical step of each decorative layer below the card.
-  static const double decorativeLayerOffsetY = 5.0;
+  /// Vertical step between stacked cards; older cards peek out above.
+  static const double stackLayerOffsetY = 12.0;
 
-  /// Horizontal inset added per decorative layer.
-  static const double decorativeLayerInsetX = 10.0;
+  /// Horizontal inset added per stacked layer on each side.
+  static const double stackLayerInsetX = 16.0;
+
+  /// Duration of the stack shift animation when a new card arrives.
+  static const Duration stackAnimationDuration = Duration(milliseconds: 500);
 
   /// Height reserved for the top bar under the safe area.
   static const double topBarHeight = 58.0;

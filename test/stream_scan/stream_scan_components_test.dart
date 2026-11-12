@@ -82,6 +82,62 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('draws at most 3 stacked layers, newest in front', (
+      WidgetTester tester,
+    ) async {
+      final StreamScanController controller = _acceptingController();
+
+      // Five cards in the controller; the stack only draws the newest three.
+      controller.recentCards.value = <StreamScanCardItem>[
+        for (final String code in <String>['E', 'D', 'C', 'B', 'A'])
+          StreamScanCardItem(
+            code: code,
+            title: 'SP $code',
+            acceptedQuantity: 1,
+            timestamp: DateTime.now(),
+          ),
+      ];
+
+      await tester.pumpWidget(
+        _buildTestApp(StreamScanResultCardComponent(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byType(StreamScanResultCardComponent),
+          matching: find.byType(AnimatedPositioned),
+        ),
+        findsNWidgets(StreamScanConstants.stackVisibleLayers),
+      );
+      // Only the front (newest) card shows its content.
+      expect(find.text('SP E'), findsOneWidget);
+      expect(find.text('SP D'), findsNothing);
+
+      // A newer card slides the older ones back; still 3 layers.
+      controller.recentCards.value = <StreamScanCardItem>[
+        StreamScanCardItem(
+          code: 'F',
+          title: 'SP F',
+          acceptedQuantity: 1,
+          timestamp: DateTime.now(),
+        ),
+        ...controller.recentCards.value,
+      ];
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byType(StreamScanResultCardComponent),
+          matching: find.byType(AnimatedPositioned),
+        ),
+        findsNWidgets(StreamScanConstants.stackVisibleLayers),
+      );
+      expect(find.text('SP F'), findsOneWidget);
+      expect(find.text('SP E'), findsNothing);
+
+      controller.dispose();
+    });
+
     testWidgets('shows lookup state while the first scan is in flight', (
       WidgetTester tester,
     ) async {
@@ -204,7 +260,11 @@ void main() {
       await tester.pumpWidget(
         _buildTestApp(StreamScanCounterComponent(controller: controller)),
       );
-      expect(find.text('0'), findsNWidgets(2));
+      // Hidden until the first product is accepted.
+      expect(
+        find.text('${StreamScanConstants.counterItemsLabel} '),
+        findsNothing,
+      );
 
       for (final String code in <String>['A', 'A', 'B']) {
         controller.dispatcher.dispatch(StreamScanRequest(code: code));
@@ -230,6 +290,9 @@ void main() {
       final Finder itemsLabel = find.text(
         '${StreamScanConstants.counterItemsLabel} ',
       );
+      controller.dispatcher.dispatch(const StreamScanRequest(code: 'A'));
+      await tester.pump();
+      await tester.pump();
       expect(itemsLabel, findsOneWidget);
 
       controller.setContinuousMode(false);
@@ -438,7 +501,7 @@ void main() {
   });
 
   group('StreamScanPage', () {
-    testWidgets('shows spec layout: toggle, no counter, no card, no finish', (
+    testWidgets('shows spec layout: toggle, no card, no counter, no finish', (
       WidgetTester tester,
     ) async {
       final StreamScanController controller = _acceptingController();
@@ -448,7 +511,11 @@ void main() {
         find.text(StreamScanConstants.continuousToggleLabel),
         findsOneWidget,
       );
-      expect(find.byType(StreamScanCounterComponent), findsNothing);
+      expect(find.byType(StreamScanCounterComponent), findsOneWidget);
+      expect(
+        find.text('${StreamScanConstants.counterItemsLabel} '),
+        findsNothing,
+      );
       expect(
         find.descendant(
           of: find.byType(StreamScanResultCardComponent),

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -32,10 +34,10 @@ class StreamScanResultCardComponent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const int layers = StreamScanConstants.decorativeLayerCount;
+    const int maxLayers = StreamScanConstants.stackVisibleLayers;
     const double stackHeight =
         StreamScanConstants.productCardHeight +
-        layers * StreamScanConstants.decorativeLayerOffsetY;
+        (maxLayers - 1) * StreamScanConstants.stackLayerOffsetY;
 
     return RepaintBoundary(
       child: ValueListenableBuilder<List<StreamScanCardItem>>(
@@ -45,31 +47,16 @@ class StreamScanResultCardComponent extends StatelessWidget {
           if (cards.isEmpty) {
             return const SizedBox.shrink();
           }
-          final StreamScanCardItem front = cards.first;
+          // Newest first; only the first few are drawn.
+          final int visible = math.min(cards.length, maxLayers);
           return SizedBox(
             height: stackHeight,
             child: Stack(
               clipBehavior: Clip.none,
               children: <Widget>[
-                // Decorative layers only; drawn farthest first.
-                for (int depth = layers; depth >= 1; depth--)
-                  _buildDecorativeLayer(depth),
-                Positioned(
-                  top: 0.0,
-                  left: 0.0,
-                  right: 0.0,
-                  height: StreamScanConstants.productCardHeight,
-                  child: GestureDetector(
-                    key: const ValueKey<String>('stream_scan_card_tap'),
-                    behavior: HitTestBehavior.opaque,
-                    onTap: onTap,
-                    child: customBuilder != null
-                        ? customBuilder!(context, front)
-                        : _buildCardShell(
-                            child: _buildProductContent(context, front),
-                          ),
-                  ),
-                ),
+                // Farthest layer first so the newest card ends up in front.
+                for (int depth = visible - 1; depth >= 0; depth--)
+                  _buildLayer(context, cards[depth], depth),
               ],
             ),
           );
@@ -78,22 +65,44 @@ class StreamScanResultCardComponent extends StatelessWidget {
     );
   }
 
-  Widget _buildDecorativeLayer(int depth) {
-    final double inset = depth * StreamScanConstants.decorativeLayerInsetX;
-    final double alpha = 0.75 - depth * 0.18;
-    return Positioned(
-      top: depth * StreamScanConstants.decorativeLayerOffsetY,
+  /// One card of the stack. The newest sits at the bottom; older cards peek
+  /// out above it, narrower, and slide up when a new card arrives.
+  Widget _buildLayer(BuildContext context, StreamScanCardItem item, int depth) {
+    const double frontTop =
+        (StreamScanConstants.stackVisibleLayers - 1) *
+        StreamScanConstants.stackLayerOffsetY;
+    final double inset = depth * StreamScanConstants.stackLayerInsetX;
+    final bool isFront = depth == 0;
+    return AnimatedPositioned(
+      key: ValueKey<String>('stream_scan_layer_${item.code}'),
+      duration: StreamScanConstants.stackAnimationDuration,
+      curve: Curves.easeOutQuart,
+      top: frontTop - depth * StreamScanConstants.stackLayerOffsetY,
       left: inset,
       right: inset,
       height: StreamScanConstants.productCardHeight,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(
-            StreamScanConstants.productCardColorValue,
-          ).withValues(alpha: alpha),
-          borderRadius: BorderRadius.circular(
-            StreamScanConstants.defaultCardBorderRadius,
-          ),
+      child: isFront
+          ? GestureDetector(
+              key: const ValueKey<String>('stream_scan_card_tap'),
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: customBuilder != null
+                  ? customBuilder!(context, item)
+                  : _buildCardShell(child: _buildProductContent(context, item)),
+            )
+          : _buildBackLayer(depth),
+    );
+  }
+
+  Widget _buildBackLayer(int depth) {
+    final double alpha = 0.75 - depth * 0.18;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(
+          StreamScanConstants.productCardColorValue,
+        ).withValues(alpha: alpha),
+        borderRadius: BorderRadius.circular(
+          StreamScanConstants.defaultCardBorderRadius,
         ),
       ),
     );

@@ -26,7 +26,7 @@
 |---|---|---|
 | A | Bỏ chống trùng 1 giây | Chỉ dùng leaveFrame (`missedFrames = 2`) |
 | B | Bỏ nút "Hoàn thành" | Chạm thẻ sản phẩm thì thoát để easypos mở giỏ hàng |
-| C | Tắt bộ đếm | Không còn hiện trên màn quét |
+| C | Bộ đếm | Ban đầu tắt, sau đó chủ dự án chốt lại: vẫn hiện khi bật quét liên tục, ẩn khi chưa quét được sản phẩm nào |
 | D | Không ưu tiên toast lỗi | Giữ nguyên, toast lỗi thay thế toast thành công |
 | E (theo BR-012) | Nút X / back | Thoát ngay, không hỏi xác nhận, giữ nguyên giỏ hàng |
 
@@ -79,7 +79,7 @@ final StreamScanSession session = await SmartScanner.scanStream(
 |---|---|
 | Công tắc quét liên tục | Tắt: quét một mã rồi tạm dừng, hiện "Chạm để quét tiếp". Mã không hợp lệ không làm dừng |
 | Thẻ sản phẩm (Phần 4) | Ẩn đến khi quét được mã đầu tiên. Xếp chồng tối đa 3 lớp, mới nhất ở trên |
-| Bộ đếm (Phần 5) | Không hiện trên màn quét. Component vẫn còn trong thư viện |
+| Bộ đếm (Phần 5) | Nằm ngay phía trên chồng thẻ sản phẩm. Ẩn khi tắt quét liên tục và ẩn đến khi quét được sản phẩm đầu tiên |
 | Toast (Phần 6) | Mỗi lúc chỉ hiện một toast: lỗi (đỏ), thành công (xanh), thông tin |
 | Mạng chậm | Chỉ báo sau 3 giây chưa có phản hồi, không hủy request |
 | Camera | Zoom 1x/2x/3x, flash, chạm lấy nét, tự ngủ sau 60 giây, giảm tốc độ khung hình khi đứng yên |

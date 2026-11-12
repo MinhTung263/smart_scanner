@@ -5,13 +5,21 @@ import '../../domain/entities/stream_scan_card_item.dart';
 import '../controllers/stream_scan_controller.dart';
 
 /// Read-only pill "Mặt hàng: N | Số lượng: M" for the current session.
-/// Shown only while the "Quét liên tục" toggle is on.
+/// Shown only while the "Quét liên tục" toggle is on, and hidden until the
+/// first product has been accepted.
 class StreamScanCounterComponent extends StatelessWidget {
   /// Controller supplying the session counter.
   final StreamScanController controller;
 
+  /// Space around the pill; applied only while the pill is visible.
+  final EdgeInsetsGeometry margin;
+
   /// Creates a session counter pill.
-  const StreamScanCounterComponent({super.key, required this.controller});
+  const StreamScanCounterComponent({
+    super.key,
+    required this.controller,
+    this.margin = EdgeInsets.zero,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +40,11 @@ class StreamScanCounterComponent extends StatelessWidget {
     return ValueListenableBuilder<StreamScanCounter>(
       valueListenable: controller.counter,
       builder: (BuildContext context, StreamScanCounter counter, _) {
+        if (counter.itemCount == 0) {
+          return const SizedBox.shrink();
+        }
         return Container(
+          margin: margin,
           padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.0),
           decoration: BoxDecoration(
             color: const Color(StreamScanConstants.counterBackgroundColorValue),

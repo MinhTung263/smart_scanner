@@ -8,6 +8,7 @@ import '../../domain/entities/stream_scan_request.dart';
 import '../../domain/entities/stream_scan_response.dart';
 import '../../domain/usecases/stream_scan_dispatcher.dart';
 import '../components/stream_scan_continuous_toggle_component.dart';
+import '../components/stream_scan_counter_component.dart';
 import '../components/stream_scan_error_chip_component.dart';
 import '../components/stream_scan_result_card_component.dart';
 import '../components/stream_scan_slow_network_component.dart';
@@ -282,6 +283,15 @@ class StreamScanPageState extends State<StreamScanPage> {
                         StreamScanSlowNetworkComponent(
                           controller: _controller,
                           customBuilder: widget.slowNetworkBuilder,
+                        ),
+                        // Session counter sits right above the card stack.
+                        Center(
+                          child: StreamScanCounterComponent(
+                            controller: _controller,
+                            margin: const EdgeInsets.only(
+                              bottom: StreamScanConstants.defaultItemSpacing,
+                            ),
+                          ),
                         ),
                         StreamScanResultCardComponent(
                           controller: _controller,

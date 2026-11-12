@@ -7,7 +7,13 @@
   - Added non-blocking background queue drain (`session.drained` returning `StreamScanSummary`) ensuring all in-flight requests finish cleanly after the screen closes.
   - Built with pure Flutter reactive primitives (`ChangeNotifier`, `ValueNotifier`, `RepaintBoundary`) without third-party framework dependencies.
   - Added `StreamScanResponse.accept` and `StreamScanResponse.reject` models with visual feedback cards and error chips.
+  - Scanned products use the same stacked-card effect as multi-scan: the newest card in front at the bottom, older cards peeking out above it (narrower, 12px steps) and sliding up with a 500ms ease-out when a new card arrives. At most 3 layers are drawn, which is display only.
   - Scanned products are shown as stacked layers, most recent scan in front; re-scanning a product moves its layer to the front and updates its quantity, and a rejected re-scan of a product already in the cart keeps its layer at the previous quantity.
+  - The product card and the "Mặt hàng | Số lượng" counter are hidden until the first code is accepted; the counter sits right above the card stack and is hidden while the "Quét liên tục" toggle is off.
+  - Removed the "Hoàn thành" button, the exit confirmation and `isDiscarded`. Back leaves at once and keeps the cart; tapping the product card closes the screen and `StreamScanSession.exitReason` is `StreamScanExitReason.cardTap` so the host can open the cart. `scanStream` no longer takes `finishButtonBuilder` or `exitConfirmBuilder`.
+  - Each accepted code shows a green "Thêm vào giỏ hàng thành công" toast (`StreamScanChipKind.success`); a later error toast replaces it.
+  - Added `StreamScanOptions.validator` (`StreamScanValidator`): a host rule run before a scan is counted. Invalid codes flash red, vibrate and show the returned message, and never reach `onScan`, the card or the counter. Default `null` keeps the previous behavior.
+  - Added opt-in `StreamScanValidators.gs1CheckDigit` (EAN-13, EAN-8, UPC-A, UPC-E, ITF-14) and `StreamScanValidators.all` to combine rules.
   - Added double-haptic error vibration and single-haptic success vibration via `StreamVibrationService`.
   - Added slow network warning indicator (`slowHintAfter`) without aborting or desynchronizing host requests.
   - Added demo POS cashier screen with realtime API simulation in `smart_scanner_app`.

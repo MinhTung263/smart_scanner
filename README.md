@@ -123,8 +123,9 @@ Designed for POS cashier scanning, inventory intake, and continuous barcode disp
 - **Batch Aggregation & Sequential Dispatch**: While an asynchronous request for barcode `X` is in flight, any subsequent counts of barcode `X` are automatically aggregated into `quantity`. Calls for the same barcode are processed sequentially, preventing race conditions.
 - **Concurrency Limiting**: Supports parallel processing for different barcodes (default `maxConcurrent: 2`).
 - **Error Feedback & Rescan**: When `onScan` returns `StreamScanResponse.reject(msg)`, the app vibrates with 2 pulses, displays an auto-dismissing error chip with the exact count of items not added (`req.quantity + queued`), and cancels in-flight pending scans for that barcode so cashiers can re-scan immediately without cooldown or race conditions.
-- **Layered Product Cards**: Scanned products appear as stacked layers above the finish button (up to `maxVisibleCards`, default 3), most recent scan in front. A product scanned for the first time adds a new layer; re-scanning a product already in the session slides its layer to the front and, once `onScan` accepts it, shows the new quantity (`totalInCart` from your response, or the session's accepted count if you don't return one). If a re-scan of a product that is already in the cart is rejected, its layer stays at the previous quantity and only the error chip is shown; a product that was never accepted has its layer removed.
-- **Background Drain**: When the user taps "Hoàn tất" or navigates back, `await session.drained` ensures all remaining background network requests finish before transitioning to payment, returning the final `StreamScanSummary` (`acceptedQuantity` and `notAddedQuantity`).
+- **Layered Product Cards**: Scanned products appear as a stack of cards like the multi-scan screen: the newest in front, older ones peeking out above it and sliding up when a new one arrives. At most 3 layers are drawn (display only; `maxVisibleCards` still limits the cards kept). A product scanned for the first time adds a new layer; re-scanning a product already in the session slides its layer to the front and, once `onScan` accepts it, shows the new quantity (`totalInCart` from your response, or the session's accepted count if you don't return one). If a re-scan of a product that is already in the cart is rejected, its layer stays at the previous quantity and only the error chip is shown; a product that was never accepted has its layer removed.
+- **Host Validation (`validator`)**: Pass a `StreamScanValidator` (`String? Function(String code, BarcodeFormat format)`) to reject codes before they are counted: return `null` for valid, or the toast message. Invalid codes flash red and vibrate but never reach `onScan`, the card or the counter. Nothing is validated by default; `StreamScanValidators.gs1CheckDigit` and `StreamScanValidators.all` are opt-in helpers.
+- **Background Drain**: When the user leaves (back, or a tap on the product card), `await session.drained` ensures all remaining background network requests finish before transitioning to payment, returning the final `StreamScanSummary` (`acceptedQuantity` and `notAddedQuantity`). Back keeps the cart as is; a tap on the product card sets `session.exitReason` to `StreamScanExitReason.cardTap`, so navigate to your cart screen in that case.
 
 #### Code Example
 
@@ -152,11 +153,16 @@ final StreamScanSession session = await SmartScanner.scanStream(
       totalInCart: cart.getQuantity(product),
     );
   },
-  options: const StreamScanOptions(
-    rescanPolicy: RescanPolicy.leaveFrame(missedFrames: 2),
+  options: StreamScanOptions(
+    rescanPolicy: const RescanPolicy.leaveFrame(missedFrames: 2),
     maxCodesPerFrame: 1,
     maxConcurrent: 2,
-    slowHintAfter: Duration(seconds: 3),
+    slowHintAfter: const Duration(seconds: 3),
+    // Optional: rules checked before counting; invalid codes never reach onScan.
+    validator: StreamScanValidators.all(<StreamScanValidator>[
+      StreamScanValidators.gs1CheckDigit(message: 'Mã không hợp lệ'),
+      (code, format) => code.length < 4 ? 'Mã quá ngắn' : null,
+    ]),
   ),
 );
 
