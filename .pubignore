@@ -2,3 +2,6 @@ smart_scanner_app/
 *.iml
 .idea/
 .vscode/
+build/
+# Tài liệu kế hoạch nội bộ, không phát hành
+docs/

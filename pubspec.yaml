@@ -25,6 +25,9 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
   shared_preferences_platform_interface: ^2.4.2
+  # Test dựng frame camera / ảnh ML Kit giả (test/nv21_test.dart, test/barcode_orientation_test.dart).
+  camera_platform_interface: ^2.15.0
+  google_mlkit_commons: ^0.12.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

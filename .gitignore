@@ -6,3 +6,6 @@
 .flutter-plugins-dependencies
 pubspec.lock
 .vscode/
+
+# Thư mục build của Flutter (từng bị commit nhầm, làm gói pub.dev nặng 34 MB)
+build/
