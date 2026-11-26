@@ -125,6 +125,11 @@ class SmartScannerScreen extends StatefulWidget {
   /// scanner's own buttons are unaffected; they follow the system's touch
   /// feedback setting.
   final bool? enableVibration;
+
+  /// `false`: quét xong (1 mã) vẫn hiện hiệu ứng "Quét thành công!" nhưng KHÔNG kèm dòng
+  /// "Đã quét mã: …" — dùng khi mã chứa thông tin riêng tư (VD QR căn cước).
+  /// Mặc định `true` (hành vi cũ).
+  final bool showScannedValue;
   final Widget Function(BuildContext context, String barcode)?
   bottomWidgetBuilder;
   final Widget Function(BuildContext context, String barcode)?
@@ -149,6 +154,7 @@ class SmartScannerScreen extends StatefulWidget {
     this.showMultiScanToggle = true,
     this.incrementOnDuplicate = true,
     this.enableVibration,
+    this.showScannedValue = true,
     this.bottomWidgetBuilder,
     this.multiScanItemBuilder,
     this.multiScanSummaryBuilder,
@@ -227,7 +233,8 @@ class _SmartScannerScreenState extends State<SmartScannerScreen>
     _scanHaptic();
     setState(() {
       _isCompleting = true;
-      _completionSubtitle = 'Đã quét mã: $barcode';
+      _completionSubtitle =
+          widget.showScannedValue ? 'Đã quét mã: $barcode' : null;
     });
 
     Future.delayed(const Duration(milliseconds: 400), () {

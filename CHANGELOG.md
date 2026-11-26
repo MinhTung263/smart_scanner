@@ -1,3 +1,9 @@
+## 0.1.1
+
+- Added `showScannedValue` (default `true`) to `SmartScanner.scan` / `scanQR` / `scanBarcode` / `scanBasic`
+  and `SmartScannerScreen`. When `false`, a single scan still shows the "Quét thành công!" success
+  overlay but hides the "Đã quét mã: …" line, for codes carrying private data (e.g. citizen ID QR).
+
 ## 0.1.0
 
 - **Barcode Stream Scanning (Continuous POS Realtime Mode)**:

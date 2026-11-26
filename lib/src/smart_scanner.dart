@@ -97,6 +97,10 @@ class SmartScanner {
   /// Vibration on a successful scan follows the app-wide [vibrateOnScan];
   /// pass [enableVibration] to force it on or off for this scan only.
   ///
+  /// [showScannedValue] = `false`: a single scan still plays the
+  /// "Quét thành công!" success overlay but hides the scanned value line
+  /// (useful when the code carries private data, e.g. a citizen ID QR).
+  ///
   /// - A [SmartScannerResult] if barcodes are scanned.
   /// - `null` if the user cancels or goes back without scanning.
   static Future<SmartScannerResult?> scan(
@@ -106,6 +110,7 @@ class SmartScanner {
     bool showMultiScanToggle = true,
     bool incrementOnDuplicate = true,
     bool? enableVibration,
+    bool showScannedValue = true,
     Widget Function(BuildContext context, String barcode)? bottomWidgetBuilder,
     Widget Function(BuildContext context, String barcode)? multiScanItemBuilder,
     Widget Function(BuildContext context, int totalItems, int totalQuantity)?
@@ -129,6 +134,7 @@ class SmartScanner {
           showMultiScanToggle: showMultiScanToggle,
           incrementOnDuplicate: incrementOnDuplicate,
           enableVibration: enableVibration,
+          showScannedValue: showScannedValue,
           bottomWidgetBuilder:
               bottomWidgetBuilder ??
               (context, barcode) {
@@ -333,6 +339,7 @@ class SmartScanner {
     bool showMultiScanToggle = true,
     bool incrementOnDuplicate = true,
     bool? enableVibration,
+    bool showScannedValue = true,
   }) {
     return scan(
       context,
@@ -341,6 +348,7 @@ class SmartScanner {
       showMultiScanToggle: showMultiScanToggle,
       incrementOnDuplicate: incrementOnDuplicate,
       enableVibration: enableVibration,
+      showScannedValue: showScannedValue,
     );
   }
 
@@ -351,6 +359,7 @@ class SmartScanner {
     bool showMultiScanToggle = true,
     bool incrementOnDuplicate = true,
     bool? enableVibration,
+    bool showScannedValue = true,
   }) {
     return scan(
       context,
@@ -359,6 +368,7 @@ class SmartScanner {
       showMultiScanToggle: showMultiScanToggle,
       incrementOnDuplicate: incrementOnDuplicate,
       enableVibration: enableVibration,
+      showScannedValue: showScannedValue,
     );
   }
 
